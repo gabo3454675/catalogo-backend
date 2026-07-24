@@ -28,7 +28,10 @@ const roundUsd = (value: number) => Math.round((value + Number.EPSILON) * 100) /
 
 export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'category' | 'name'>, rate: number) {
   const baseUsd = product.sourcePriceBs / rate
-  const markupUsd = baseUsd >= 100 ? 15 : 10
+  const isWatch = /reloj/i.test(product.category) || /reloj/i.test(product.name)
+  const markupUsd = isWatch
+    ? baseUsd >= 40 ? 20 : baseUsd >= 30 ? 15 : 10
+    : baseUsd >= 100 ? 15 : 10
   return { price: roundUsd(baseUsd + markupUsd), markupUsd }
 }
 
