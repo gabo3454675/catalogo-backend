@@ -113,8 +113,7 @@ async function fetchBcvRate(): Promise<BcvRate> {
 function sellingPrice(product: SourceProduct, rate: number) {
   // Regla comercial solicitada: la tasa oficial EUR/VES define el valor base mostrado en USD.
   const commercialUsd = product.sourcePriceBs / rate
-  const isWatch = /reloj/i.test(product.category) || /reloj/i.test(product.name)
-  const markupUsd = isWatch ? (commercialUsd >= 100 ? 15 : 10) : 0
+  const markupUsd = commercialUsd >= 100 ? 15 : 10
   return { price: roundUsd(commercialUsd + markupUsd), markupUsd }
 }
 
