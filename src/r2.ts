@@ -9,7 +9,7 @@ export async function uploadRemoteImage(sourceUrl: string, objectKey: string) {
   const target = `${mediaWorkerUrl}/${objectKey}`
   const uploaded = await fetch(target, {
     method: 'PUT',
-    headers: { Authorization: `Bearer ${mediaUploadToken}`, 'Content-Type': contentType },
+    headers: { 'X-Kronos-Token': mediaUploadToken, 'Content-Type': contentType },
     body: await source.arrayBuffer(),
   })
   if (!uploaded.ok) throw new Error(`No se pudo guardar la imagen en R2: ${uploaded.status}`)

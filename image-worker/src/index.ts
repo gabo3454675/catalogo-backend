@@ -12,7 +12,7 @@ export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/sync/catalog' || url.pathname === '/sync/products') {
-      if (request.headers.get('Authorization') !== `Bearer ${env.UPLOAD_TOKEN}`) return new Response('Unauthorized', { status: 401 })
+      if (request.headers.get('X-Kronos-Token') !== env.UPLOAD_TOKEN) return new Response('Unauthorized', { status: 401 })
       const response = url.pathname === '/sync/catalog'
         ? await fetch(catalogUrl, { headers: sourceHeaders })
         : await fetch(productsUrl, { method: 'POST', headers: { ...sourceHeaders, 'Content-Type': 'application/x-www-form-urlencoded' }, body: await request.text() })
@@ -33,7 +33,7 @@ export default {
     }
 
     if (request.method === 'PUT') {
-      if (request.headers.get('Authorization') !== `Bearer ${env.UPLOAD_TOKEN}`) return new Response('Unauthorized', { status: 401 })
+      if (request.headers.get('X-Kronos-Token') !== env.UPLOAD_TOKEN) return new Response('Unauthorized', { status: 401 })
       if (!request.body || !request.headers.get('Content-Type')?.startsWith('image/')) return new Response('Invalid image', { status: 400 })
       await env.IMAGES.put(key, request.body, { httpMetadata: { contentType: request.headers.get('Content-Type') } })
       return Response.json({ key, url: new URL(request.url).toString() })

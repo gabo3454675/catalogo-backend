@@ -50,7 +50,7 @@ function parseProducts(html: string): SourceProduct[] {
 }
 
 async function fetchSourceProducts() {
-  const proxyHeaders = catalogProxyUrl && uploadToken ? { Authorization: `Bearer ${uploadToken}` } : undefined
+  const proxyHeaders = catalogProxyUrl && uploadToken ? { 'X-Kronos-Token': uploadToken } : undefined
   const { data: sourceHtml } = catalogProxyUrl
     ? await axios.get<string>(`${catalogProxyUrl}/sync/catalog`, { headers: proxyHeaders })
     : await axios.get<string>(SOURCE_URL, { headers })
