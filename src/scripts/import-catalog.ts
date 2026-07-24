@@ -21,7 +21,7 @@ type SourceProduct = {
   sourcePriceBs: number
   category: string
   brand: string | undefined
-  imageUrl: string | undefined
+  imageUrls: string[]
   available: boolean
 }
 
@@ -32,9 +32,16 @@ function parseProducts(html: string): SourceProduct[] {
   return $('.contenidoItem').map((_index, element) => {
     const item = $(element)
     const card = item.closest('.cajaItem')
-    const sourcePriceBs = Number((item.attr('modalPrecioCarrito') ?? '').replace(',', '.'))
+    const sourcePriceBs = Number((item.attr('modalPrecioCarrito') ?? '').replace(/[.,](?=\d{3}(?:[.,]|$))/g, '').replace(',', '.'))
     const name = item.attr('modalTituloProducto')?.trim() ?? ''
     const sourceImage = card.find('img[data-src]').first().attr('data-src')
+    const imageBase = sourceImage ? new URL('./', sourceImage).toString() : undefined
+    const imageUrls = [1, 2, 3, 4, 5]
+      .map((index) => item.attr(`modalImagenGaleria${index}`)?.trim())
+      .filter((filename): filename is string => Boolean(filename))
+      .map((filename) => imageBase ? new URL(filename, imageBase).toString() : undefined)
+      .filter((url): url is string => Boolean(url))
+    if (sourceImage && !imageUrls.includes(sourceImage)) imageUrls.unshift(sourceImage)
     if (!name || !Number.isFinite(sourcePriceBs)) return null
     return {
       sku: item.attr('modalIdProducto') ?? slugify(name),
@@ -43,15 +50,16 @@ function parseProducts(html: string): SourceProduct[] {
       sourcePriceBs,
       category: card.find('.tt-add-info li').first().text().trim() || 'General',
       brand: card.find('.tt-add-info li').first().text().trim() || undefined,
-      imageUrl: sourceImage,
+      imageUrls: [...new Set(imageUrls)],
       available: item.attr('modalStock') !== '0',
     }
   }).get().filter((product): product is SourceProduct => product !== null)
 }
 
 async function fetchSourceProducts() {
+  if (catalogProxyUrl && !uploadToken) throw new Error('MEDIA_UPLOAD_TOKEN es obligatoria cuando se usa el proxy de catálogo.')
   const proxyHeaders = catalogProxyUrl && uploadToken ? { 'X-Kronos-Token': uploadToken } : undefined
-  const configuredFilters = process.env.CATALOG_DATA_FILTERS
+  const configuredFilters = process.env.CATALOG_DATA_FILTERS?.trim()
   let dataFiltros = configuredFilters
   if (!dataFiltros) {
     const { data: sourceHtml } = catalogProxyUrl
@@ -67,12 +75,15 @@ async function fetchSourceProducts() {
   let category = 0
   while (page < 100) {
     const formData = new URLSearchParams({ dataFiltros, categoriaActual: String(category), paginacionActual: String(page), primeraCargaProducto: String(firstLoad) })
-    const { data } = catalogProxyUrl
-      ? await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string, categoriaActual: number }>(`${catalogProxyUrl}/sync/products`, formData.toString(), { headers: { ...proxyHeaders, 'Content-Type': 'application/x-www-form-urlencoded' } })
-      : await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string, categoriaActual: number }>(PRODUCT_API_URL, formData, { headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' } })
+    const response = catalogProxyUrl
+      ? await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string | number, categoriaActual: number }>(`${catalogProxyUrl}/sync/products`, formData.toString(), { headers: { ...proxyHeaders, 'Content-Type': 'application/x-www-form-urlencoded' } })
+      : await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string | number, categoriaActual: number }>(PRODUCT_API_URL, formData, { headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' } })
+    const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
     if (!data.respuestaOK) throw new Error('VOLKOVAMEN rechazó la consulta de productos.')
-    for (const product of parseProducts(data.productos)) products.set(product.sku, product)
-    if (data.resultadoBusqueda === 'fin-busqueda' || data.resultadoBusqueda === 'no-resultado') break
+    const parsedProducts = parseProducts(data.productos ?? '')
+    console.log(`Página ${page}: ${parsedProducts.length} productos procesados (${String(data.resultadoBusqueda)}).`)
+    for (const product of parsedProducts) products.set(product.sku, product)
+    if (parsedProducts.length === 0 || data.resultadoBusqueda === 'fin-busqueda' || data.resultadoBusqueda === 'no-resultado') break
     page += 1
     firstLoad = 0
     category = data.categoriaActual
@@ -115,16 +126,37 @@ export async function syncCatalog() {
     let productsAdded = 0
     for (const product of products) {
       const slug = `${slugify(product.name)}-${product.sku}`
-      const existing = await prisma.product.findUnique({ where: { slug } })
+      const existing = await prisma.product.findUnique({ where: { slug }, include: { images: { orderBy: { sortOrder: 'asc' } } } })
       const category = await prisma.category.upsert({ where: { slug: slugify(product.category) }, update: { name: product.category }, create: { name: product.category, slug: slugify(product.category) } })
       const brand = product.brand ? await prisma.brand.upsert({ where: { slug: slugify(product.brand) }, update: { name: product.brand }, create: { name: product.brand, slug: slugify(product.brand) } }) : undefined
       const { price, markupUsd } = sellingPrice(product, rate.value)
-      const imageUrl = existing?.imageUrl ?? (product.imageUrl ? await uploadRemoteImage(product.imageUrl, `products/${slug}.jpg`) : undefined)
-      await prisma.product.upsert({
+      const savedProduct = await prisma.product.upsert({
         where: { slug },
-        update: { sku: product.sku, name: product.name, description: product.description, price, sourcePriceBs: product.sourcePriceBs, exchangeRate: rate.value, markupUsd, available: product.available, sourceUrl: SOURCE_URL, imageUrl, categoryId: category.id, brandId: brand?.id },
-        create: { sku: product.sku, slug, name: product.name, description: product.description, price, sourcePriceBs: product.sourcePriceBs, exchangeRate: rate.value, markupUsd, available: product.available, sourceUrl: SOURCE_URL, imageUrl, categoryId: category.id, brandId: brand?.id },
+        update: { sku: product.sku, name: product.name, description: product.description, price, sourcePriceBs: product.sourcePriceBs, exchangeRate: rate.value, markupUsd, available: product.available, sourceUrl: SOURCE_URL, categoryId: category.id, brandId: brand?.id },
+        create: { sku: product.sku, slug, name: product.name, description: product.description, price, sourcePriceBs: product.sourcePriceBs, exchangeRate: rate.value, markupUsd, available: product.available, sourceUrl: SOURCE_URL, categoryId: category.id, brandId: brand?.id },
       })
+      let coverImageUrl = existing?.images[0]?.url ?? savedProduct.imageUrl
+      for (const [sortOrder, sourceImageUrl] of product.imageUrls.entries()) {
+        const storedImage = existing?.images.find((image) => image.sortOrder === sortOrder)
+        if (storedImage) {
+          if (sortOrder === 0) coverImageUrl = storedImage.url
+          continue
+        }
+        try {
+          const imageUrl = await uploadRemoteImage(sourceImageUrl, `products/${slug}/${sortOrder}.jpg`)
+          await prisma.productImage.upsert({
+            where: { productId_sortOrder: { productId: savedProduct.id, sortOrder } },
+            update: { url: imageUrl },
+            create: { productId: savedProduct.id, sortOrder, url: imageUrl },
+          })
+          if (sortOrder === 0) coverImageUrl = imageUrl
+        } catch (error) {
+          console.warn(`No se pudo importar imagen ${sortOrder + 1} de ${product.sku}:`, error)
+        }
+      }
+      if (coverImageUrl && coverImageUrl !== savedProduct.imageUrl) {
+        await prisma.product.update({ where: { id: savedProduct.id }, data: { imageUrl: coverImageUrl } })
+      }
       if (!existing) productsAdded += 1
     }
     await prisma.syncRun.update({ where: { id: syncRun.id }, data: { status: 'success', completedAt: new Date(), productsFound: products.length, productsAdded, exchangeRate: rate.value, rateUpdatedAt: rate.updatedAt } })

@@ -32,6 +32,7 @@ model Product {
   markupUsd     Decimal  @default(0) @db.Decimal(12, 2)
   available   Boolean  @default(true)
   imageUrl    String?
+  images      ProductImage[]
   sourceUrl   String?
   categoryId  String
   brandId     String?
@@ -43,6 +44,17 @@ model Product {
   @@index([categoryId])
   @@index([brandId])
   @@index([name])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  url       String
+  sortOrder Int
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, sortOrder])
+  @@index([productId])
 }
 
 model SyncRun {

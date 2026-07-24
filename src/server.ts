@@ -81,7 +81,7 @@ app.get('/api/v1/products', async (request, response, next) => {
         orderBy,
         skip: (query.page - 1) * query.limit,
         take: query.limit,
-        include: { category: true, brand: true },
+        include: { category: true, brand: true, images: { orderBy: { sortOrder: 'asc' } } },
       }),
       prisma.product.count({ where }),
     ])
@@ -95,7 +95,7 @@ app.get('/api/v1/products/:slug', async (request, response, next) => {
   try {
     const product = await prisma.product.findUnique({
       where: { slug: request.params.slug },
-      include: { category: true, brand: true },
+      include: { category: true, brand: true, images: { orderBy: { sortOrder: 'asc' } } },
     })
     if (!product) {
       response.status(404).json({ error: 'Producto no encontrado' })
