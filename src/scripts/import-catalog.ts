@@ -122,7 +122,7 @@ function sellingPrice(product: SourceProduct, rate: number) {
   const isWatch = categoryForProduct(product.name) === 'Relojes'
   const markupUsd = isWatch
     ? commercialUsd >= 40 ? 20 : commercialUsd >= 30 ? 15 : 10
-    : commercialUsd >= 100 ? 15 : 10
+    : commercialUsd >= 80 ? 20 : commercialUsd >= 40 ? 15 : commercialUsd >= 20 ? 10 : 7
   return { price: roundUsd(commercialUsd + markupUsd), markupUsd }
 }
 

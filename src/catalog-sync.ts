@@ -38,7 +38,7 @@ export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'ca
   const isWatch = categoryForProduct(product.name) === 'Relojes'
   const markupUsd = isWatch
     ? baseUsd >= 40 ? 20 : baseUsd >= 30 ? 15 : 10
-    : baseUsd >= 100 ? 15 : 10
+    : baseUsd >= 80 ? 20 : baseUsd >= 40 ? 15 : baseUsd >= 20 ? 10 : 7
   return { price: roundUsd(baseUsd + markupUsd), markupUsd }
 }
 
