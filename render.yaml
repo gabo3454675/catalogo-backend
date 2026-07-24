@@ -20,8 +20,6 @@ services:
           property: connectionString
       - key: CORS_ORIGIN
         sync: false
-      - key: BCV_API_KEY
-        sync: false
       - key: MEDIA_WORKER_URL
         value: https://kronos-images.glonga10.workers.dev
       - key: MEDIA_UPLOAD_TOKEN
@@ -38,8 +36,6 @@ services:
         fromDatabase:
           name: kronos-db
           property: connectionString
-      - key: BCV_API_KEY
-        sync: false
       - key: MEDIA_WORKER_URL
         value: https://kronos-images.glonga10.workers.dev
       - key: MEDIA_UPLOAD_TOKEN

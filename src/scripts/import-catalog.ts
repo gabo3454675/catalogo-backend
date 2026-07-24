@@ -6,7 +6,7 @@ import { uploadRemoteImage } from '../r2.js'
 
 const SOURCE_URL = process.env.CATALOG_SOURCE_URL ?? 'https://www.milcatalogos.com/volkovamen/catalogo'
 const PRODUCT_API_URL = process.env.CATALOG_PRODUCTS_URL ?? 'https://xproservidor.com/catalogoassets/control/masProductos.php'
-const RATE_URL = process.env.BCV_RATE_URL ?? 'https://api.cotizave.com/v1/fx/rates/reference'
+const RATE_URL = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/oficial'
 const headers = { 'User-Agent': 'Mozilla/5.0 (compatible; KronosCatalogSync/1.0)', Referer: SOURCE_URL, Origin: 'https://www.milcatalogos.com' }
 
 const slugify = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
@@ -77,7 +77,7 @@ function findRate(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value !== 'object' || value === null) return undefined
   const record = value as Record<string, unknown>
-  for (const key of ['rate', 'mid', 'tasa', 'value', 'usd']) {
+  for (const key of ['promedio', 'venta', 'compra', 'rate', 'mid', 'tasa', 'value', 'usd']) {
     const found = findRate(record[key])
     if (found) return found
   }
@@ -85,19 +85,19 @@ function findRate(value: unknown): number | undefined {
 }
 
 async function fetchBcvRate(): Promise<BcvRate> {
-  const apiKey = process.env.BCV_API_KEY
-  const { data } = await axios.get(RATE_URL, { headers: apiKey ? { 'X-API-Key': apiKey, Accept: 'application/json' } : { Accept: 'application/json' } })
+  const { data } = await axios.get(RATE_URL, { headers: { Accept: 'application/json' } })
   const value = findRate(data)
-  const timestamp = (data as Record<string, unknown>).updated_at ?? (data as Record<string, unknown>).updatedAt
-  if (!value || value <= 0) throw new Error('La fuente BCV no entregó una tasa USD/VES válida.')
+  const timestamp = (data as Record<string, unknown>).fechaActualizacion ?? (data as Record<string, unknown>).updated_at ?? (data as Record<string, unknown>).updatedAt
+  if (!value || value <= 0) throw new Error('DolarAPI no entregó una tasa EUR/VES válida.')
   return { value, updatedAt: timestamp ? new Date(String(timestamp)) : new Date() }
 }
 
 function sellingPrice(product: SourceProduct, rate: number) {
-  const baseUsd = product.sourcePriceBs / rate
+  // Regla comercial solicitada: la tasa oficial EUR/VES define el valor base mostrado en USD.
+  const commercialUsd = product.sourcePriceBs / rate
   const isWatch = /reloj/i.test(product.category) || /reloj/i.test(product.name)
-  const markupUsd = isWatch ? (baseUsd >= 100 ? 15 : 10) : 0
-  return { price: roundUsd(baseUsd + markupUsd), markupUsd }
+  const markupUsd = isWatch ? (commercialUsd >= 100 ? 15 : 10) : 0
+  return { price: roundUsd(commercialUsd + markupUsd), markupUsd }
 }
 
 export async function syncCatalog() {
