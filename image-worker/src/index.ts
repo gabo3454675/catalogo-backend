@@ -4,10 +4,22 @@ export interface Env {
 }
 
 const imageKey = (pathname: string) => pathname.slice(1).startsWith('products/') && !pathname.includes('..')
+const catalogUrl = 'https://www.milcatalogos.com/volkovamen/catalogo'
+const productsUrl = 'https://xproservidor.com/catalogoassets/control/masProductos.php'
+const sourceHeaders = { 'User-Agent': 'Mozilla/5.0', Referer: catalogUrl, Origin: 'https://www.milcatalogos.com', Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'es-VE,es;q=0.9' }
 
 export default {
   async fetch(request, env): Promise<Response> {
-    const key = decodeURIComponent(new URL(request.url).pathname.slice(1))
+    const url = new URL(request.url)
+    if (url.pathname === '/sync/catalog' || url.pathname === '/sync/products') {
+      if (request.headers.get('Authorization') !== `Bearer ${env.UPLOAD_TOKEN}`) return new Response('Unauthorized', { status: 401 })
+      const response = url.pathname === '/sync/catalog'
+        ? await fetch(catalogUrl, { headers: sourceHeaders })
+        : await fetch(productsUrl, { method: 'POST', headers: { ...sourceHeaders, 'Content-Type': 'application/x-www-form-urlencoded' }, body: await request.text() })
+      return new Response(response.body, { status: response.status, headers: { 'Content-Type': response.headers.get('Content-Type') ?? 'text/plain; charset=utf-8' } })
+    }
+
+    const key = decodeURIComponent(url.pathname.slice(1))
     if (!imageKey(`/${key}`)) return new Response('Not found', { status: 404 })
 
     if (request.method === 'GET' || request.method === 'HEAD') {

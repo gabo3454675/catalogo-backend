@@ -7,6 +7,8 @@ import { uploadRemoteImage } from '../r2.js'
 const SOURCE_URL = process.env.CATALOG_SOURCE_URL ?? 'https://www.milcatalogos.com/volkovamen/catalogo'
 const PRODUCT_API_URL = process.env.CATALOG_PRODUCTS_URL ?? 'https://xproservidor.com/catalogoassets/control/masProductos.php'
 const RATE_URL = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/oficial'
+const catalogProxyUrl = (process.env.CATALOG_PROXY_URL ?? process.env.MEDIA_WORKER_URL)?.replace(/\/$/, '')
+const uploadToken = process.env.MEDIA_UPLOAD_TOKEN
 const headers = { 'User-Agent': 'Mozilla/5.0', Referer: SOURCE_URL, Origin: 'https://www.milcatalogos.com', Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'es-VE,es;q=0.9' }
 
 const slugify = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
@@ -48,7 +50,10 @@ function parseProducts(html: string): SourceProduct[] {
 }
 
 async function fetchSourceProducts() {
-  const { data: sourceHtml } = await axios.get<string>(SOURCE_URL, { headers })
+  const proxyHeaders = catalogProxyUrl && uploadToken ? { Authorization: `Bearer ${uploadToken}` } : undefined
+  const { data: sourceHtml } = catalogProxyUrl
+    ? await axios.get<string>(`${catalogProxyUrl}/sync/catalog`, { headers: proxyHeaders })
+    : await axios.get<string>(SOURCE_URL, { headers })
   const $ = cheerio.load(sourceHtml)
   const dataFiltros = $('#dataFiltros').attr('dataFiltros')
   if (!dataFiltros) throw new Error('VOLKOVAMEN no entregó el identificador de filtros requerido para sincronizar.')
@@ -58,11 +63,10 @@ async function fetchSourceProducts() {
   let firstLoad = 1
   let category = 0
   while (page < 100) {
-    const { data } = await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string, categoriaActual: number }>(
-      PRODUCT_API_URL,
-      new URLSearchParams({ dataFiltros, categoriaActual: String(category), paginacionActual: String(page), primeraCargaProducto: String(firstLoad) }),
-      { headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' } },
-    )
+    const formData = new URLSearchParams({ dataFiltros, categoriaActual: String(category), paginacionActual: String(page), primeraCargaProducto: String(firstLoad) })
+    const { data } = catalogProxyUrl
+      ? await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string, categoriaActual: number }>(`${catalogProxyUrl}/sync/products`, formData.toString(), { headers: { ...proxyHeaders, 'Content-Type': 'application/x-www-form-urlencoded' } })
+      : await axios.post<{ respuestaOK: boolean, productos: string, resultadoBusqueda: string, categoriaActual: number }>(PRODUCT_API_URL, formData, { headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' } })
     if (!data.respuestaOK) throw new Error('VOLKOVAMEN rechazó la consulta de productos.')
     for (const product of parseProducts(data.productos)) products.set(product.sku, product)
     if (data.resultadoBusqueda === 'fin-busqueda' || data.resultadoBusqueda === 'no-resultado') break
