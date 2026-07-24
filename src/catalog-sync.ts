@@ -1,5 +1,9 @@
 import { prisma } from './prisma.js'
+import { classifyProduct } from './product-classify.js'
 import { uploadRemoteImage } from './r2.js'
+import { slugify } from './slug.js'
+
+export { slugify }
 
 export type CatalogProduct = {
   sku: string
@@ -16,13 +20,6 @@ export type CatalogProduct = {
 type BcvRate = { value: number, updatedAt: Date }
 
 const rateUrl = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/oficial'
-
-export const slugify = (value: string) => value
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, '-')
-  .replace(/(^-|-$)/g, '')
 
 const roundUsd = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
 
@@ -96,14 +93,13 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       update: { name: categoryName },
       create: { name: categoryName, slug: categorySlug },
     })
-    const brandSlug = product.brand ? slugify(product.brand) : undefined
-    const brand = brandSlug
-      ? await prisma.brand.upsert({
-        where: { slug: brandSlug },
-        update: { name: product.brand! },
-        create: { name: product.brand!, slug: brandSlug },
-      })
-      : undefined
+    const { brand: brandName, productType } = classifyProduct(product.name, product.brand, categoryName)
+    const brandSlug = slugify(brandName)
+    const brand = await prisma.brand.upsert({
+      where: { slug: brandSlug },
+      update: { name: brandName },
+      create: { name: brandName, slug: brandSlug },
+    })
     const { price, markupUsd } = priceProduct(product, rate)
     const saved = await prisma.product.upsert({
       where: { slug },
@@ -118,7 +114,8 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         available: product.available,
         sourceUrl: product.sourceUrl,
         categoryId: category.id,
-        brandId: brand?.id,
+        brandId: brand.id,
+        productType,
       },
       create: {
         sku: product.sku,
@@ -132,7 +129,8 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         available: product.available,
         sourceUrl: product.sourceUrl,
         categoryId: category.id,
-        brandId: brand?.id,
+        brandId: brand.id,
+        productType,
       },
     })
 
@@ -159,7 +157,17 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
     if (coverImageUrl && coverImageUrl !== saved.imageUrl) {
       await prisma.product.update({ where: { id: saved.id }, data: { imageUrl: coverImageUrl } })
     }
-    if (!existing) productsAdded += 1
+    if (!existing) {
+      productsAdded += 1
+      await prisma.syncAddition.create({
+        data: {
+          syncRunId: runId,
+          productId: saved.id,
+          productName: saved.name,
+          sku: saved.sku ?? undefined,
+        },
+      })
+    }
   }
 
   await prisma.syncRun.update({
@@ -184,4 +192,28 @@ export async function failCatalogSync(runId: string, error: string) {
     where: { id: runId },
     data: { status: 'failed', completedAt: new Date(), error: error.slice(0, 2000) },
   })
+}
+
+export async function reclassifyCatalogProducts() {
+  const products = await prisma.product.findMany({
+    include: { category: true, brand: true },
+  })
+  let updated = 0
+  for (const product of products) {
+    const categoryName = product.category?.name ?? categoryForProduct(product.name)
+    const { brand: brandName, productType } = classifyProduct(product.name, product.brand?.name, categoryName)
+    const brand = await prisma.brand.upsert({
+      where: { slug: slugify(brandName) },
+      update: { name: brandName },
+      create: { name: brandName, slug: slugify(brandName) },
+    })
+    if (product.brandId !== brand.id || product.productType !== productType) {
+      await prisma.product.update({
+        where: { id: product.id },
+        data: { brandId: brand.id, productType },
+      })
+      updated += 1
+    }
+  }
+  return { total: products.length, updated }
 }

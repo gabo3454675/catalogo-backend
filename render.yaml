@@ -26,3 +26,7 @@ services:
         sync: false
       - key: CATALOG_SYNC_TOKEN
         sync: false
+      - key: ADMIN_EMAIL
+        value: glonga10@gmail.com
+      - key: ADMIN_TOKEN
+        sync: false

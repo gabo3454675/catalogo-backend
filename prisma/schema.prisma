@@ -36,6 +36,7 @@ model Product {
   sourceUrl   String?
   categoryId  String
   brandId     String?
+  productType String?
   category    Category @relation(fields: [categoryId], references: [id])
   brand       Brand?   @relation(fields: [brandId], references: [id])
   createdAt   DateTime @default(now())
@@ -44,6 +45,7 @@ model Product {
   @@index([categoryId])
   @@index([brandId])
   @@index([name])
+  @@index([productType])
 }
 
 model ProductImage {
@@ -67,4 +69,32 @@ model SyncRun {
   exchangeRate   Decimal? @db.Decimal(14, 6)
   rateUpdatedAt  DateTime?
   error          String?
+  additions      SyncAddition[]
+}
+
+model SyncAddition {
+  id          String   @id @default(cuid())
+  syncRunId   String
+  productId   String
+  productName String
+  sku         String?
+  createdAt   DateTime @default(now())
+  syncRun     SyncRun  @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+
+  @@index([syncRunId])
+}
+
+model AnalyticsEvent {
+  id          String   @id @default(cuid())
+  type        String
+  sessionId   String?
+  productId   String?
+  productName String?
+  path        String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@index([productId])
+  @@index([sessionId])
 }
