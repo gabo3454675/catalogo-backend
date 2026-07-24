@@ -5,7 +5,7 @@
   "account_id": "4f0382424fafaf872bc11ab912244f02",
   "keep_vars": true,
   "triggers": {
-    "crons": ["0 6 * * *"]
+    "crons": ["0 10 * * *"]
   },
   "r2_buckets": [
     {
