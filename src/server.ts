@@ -299,61 +299,6 @@ const productSelect = {
   updatedAt: true,
 } as const
 
-type SelectedProduct = {
-  id: string
-  sku: string | null
-  name: string
-  slug: string
-  description: string | null
-  price: unknown
-  exchangeRate: unknown | null
-  available: boolean
-  imageUrl: string | null
-  productType: string | null
-  category: { id: string, name: string, slug: string }
-  brand: { id: string, name: string, slug: string } | null
-  images: { id: string, url: string, sortOrder: number }[]
-  createdAt: Date
-  updatedAt: Date
-}
-
-function mergeVariantFamily(variants: SelectedProduct[]) {
-  const sorted = [...variants].sort((a, b) => {
-    const imageDelta = (b.images?.length ?? 0) - (a.images?.length ?? 0)
-    if (imageDelta) return imageDelta
-    return b.createdAt.getTime() - a.createdAt.getTime()
-  })
-  const primary = sorted[0]
-  const seen = new Set<string>()
-  const images: { id: string, url: string, sortOrder: number }[] = []
-  for (const variant of sorted) {
-    const urls = [
-      ...(variant.images?.map((image) => image.url) ?? []),
-      ...(variant.imageUrl ? [variant.imageUrl] : []),
-    ]
-    for (const url of urls) {
-      if (!url || seen.has(url)) continue
-      seen.add(url)
-      images.push({ id: `${variant.id}-${images.length}`, url, sortOrder: images.length })
-    }
-  }
-  return toPublicProduct({
-    ...primary,
-    imageUrl: images[0]?.url ?? primary.imageUrl,
-    images,
-    available: sorted.some((variant) => variant.available),
-    variantCount: sorted.length,
-    variants: sorted.map((variant) => ({
-      id: variant.id,
-      sku: variant.sku,
-      slug: variant.slug,
-      price: ceilMoney(Number(variant.price)),
-      imageUrl: variant.imageUrl || variant.images?.[0]?.url || null,
-      available: variant.available,
-    })),
-  })
-}
-
 app.get('/api/v1/products', async (request, response, next) => {
   try {
     const query = productQuery.parse(request.query)
@@ -363,48 +308,36 @@ app.get('/api/v1/products', async (request, response, next) => {
       ...(query.type ? { productType: query.type } : {}),
       ...(query.search ? { name: { contains: query.search, mode: 'insensitive' as const } } : {}),
     }
-
-    const groups = await prisma.product.groupBy({
-      by: ['name'],
-      where,
-      _count: { _all: true },
-      _min: { price: true },
-      _max: { createdAt: true },
-    })
-
-    const sortedGroups = [...groups].sort((left, right) => {
-      if (query.sort === 'name') return left.name.localeCompare(right.name, 'es')
-      if (query.sort === 'price-asc') return Number(left._min.price) - Number(right._min.price)
-      if (query.sort === 'price-desc') return Number(right._min.price) - Number(left._min.price)
-      return new Date(right._max.createdAt ?? 0).getTime() - new Date(left._max.createdAt ?? 0).getTime()
-    })
-
-    const total = sortedGroups.length
-    const pageGroups = sortedGroups.slice((query.page - 1) * query.limit, query.page * query.limit)
-    const pageNames = pageGroups.map((group) => group.name)
-
-    const variants = pageNames.length
-      ? await prisma.product.findMany({
-        where: { ...where, name: { in: pageNames } },
+    const orderBy = query.sort === 'name'
+      ? { name: 'asc' as const }
+      : query.sort === 'price-asc'
+        ? { price: 'asc' as const }
+        : query.sort === 'price-desc'
+          ? { price: 'desc' as const }
+          : { createdAt: 'desc' as const }
+    const [items, total] = await prisma.$transaction([
+      prisma.product.findMany({
+        where,
+        orderBy,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
         select: productSelect,
-        orderBy: { createdAt: 'desc' },
-      })
-      : []
-
-    const byName = new Map<string, SelectedProduct[]>()
-    for (const product of variants as SelectedProduct[]) {
-      const list = byName.get(product.name) ?? []
-      list.push(product)
-      byName.set(product.name, list)
-    }
-
-    const items = pageNames
-      .map((name) => byName.get(name))
-      .filter((list): list is SelectedProduct[] => Boolean(list?.length))
-      .map((list) => mergeVariantFamily(list))
-
+      }),
+      prisma.product.count({ where }),
+    ])
     response.json({
-      items,
+      items: items.map((item) => {
+        const cover = item.imageUrl || item.images?.[0]?.url || null
+        return toPublicProduct({
+          ...item,
+          imageUrl: cover,
+          images: item.images?.length
+            ? item.images
+            : cover
+              ? [{ id: `${item.id}-cover`, url: cover, sortOrder: 0 }]
+              : [],
+        })
+      }),
       total,
       page: query.page,
       pages: Math.ceil(total / query.limit) || 1,
@@ -424,12 +357,16 @@ app.get('/api/v1/products/:slug', async (request, response, next) => {
       response.status(404).json({ error: 'Producto no encontrado' })
       return
     }
-    const siblings = await prisma.product.findMany({
-      where: { name: product.name },
-      select: productSelect,
-      orderBy: { createdAt: 'desc' },
-    })
-    response.json(mergeVariantFamily(siblings as SelectedProduct[]))
+    const cover = product.imageUrl || product.images?.[0]?.url || null
+    response.json(toPublicProduct({
+      ...product,
+      imageUrl: cover,
+      images: product.images?.length
+        ? product.images
+        : cover
+          ? [{ id: `${product.id}-cover`, url: cover, sortOrder: 0 }]
+          : [],
+    }))
   } catch (error) {
     next(error)
   }
