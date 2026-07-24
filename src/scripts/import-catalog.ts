@@ -51,11 +51,14 @@ function parseProducts(html: string): SourceProduct[] {
 
 async function fetchSourceProducts() {
   const proxyHeaders = catalogProxyUrl && uploadToken ? { 'X-Kronos-Token': uploadToken } : undefined
-  const { data: sourceHtml } = catalogProxyUrl
-    ? await axios.get<string>(`${catalogProxyUrl}/sync/catalog`, { headers: proxyHeaders })
-    : await axios.get<string>(SOURCE_URL, { headers })
-  const $ = cheerio.load(sourceHtml)
-  const dataFiltros = $('#dataFiltros').attr('dataFiltros')
+  const configuredFilters = process.env.CATALOG_DATA_FILTERS
+  let dataFiltros = configuredFilters
+  if (!dataFiltros) {
+    const { data: sourceHtml } = catalogProxyUrl
+      ? await axios.get<string>(`${catalogProxyUrl}/sync/catalog`, { headers: proxyHeaders })
+      : await axios.get<string>(SOURCE_URL, { headers })
+    dataFiltros = cheerio.load(sourceHtml)('#dataFiltros').attr('dataFiltros')
+  }
   if (!dataFiltros) throw new Error('VOLKOVAMEN no entregó el identificador de filtros requerido para sincronizar.')
 
   const products = new Map<string, SourceProduct>()
