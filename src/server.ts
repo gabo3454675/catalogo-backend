@@ -109,6 +109,7 @@ app.get('/api/v1/sync-status', async (_request, response, next) => {
 app.get('/api/v1/categories', async (_request, response, next) => {
   try {
     const categories = await prisma.category.findMany({
+      where: { products: { some: {} } },
       orderBy: { name: 'asc' },
       include: { _count: { select: { products: true } } },
     })

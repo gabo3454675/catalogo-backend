@@ -13,6 +13,12 @@ const headers = { 'User-Agent': 'Mozilla/5.0', Referer: SOURCE_URL, Origin: 'htt
 
 const slugify = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
 const roundUsd = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+const categoryForProduct = (name: string) => {
+  if (/bandoler/i.test(name)) return 'Bandoleros'
+  if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'
+  if (/set|combo|duo/i.test(name)) return 'Sets y combos'
+  return 'Relojes'
+}
 
 type SourceProduct = {
   sku: string
@@ -113,7 +119,7 @@ async function fetchBcvRate(): Promise<BcvRate> {
 function sellingPrice(product: SourceProduct, rate: number) {
   // Regla comercial solicitada: la tasa oficial EUR/VES define el valor base mostrado en USD.
   const commercialUsd = product.sourcePriceBs / rate
-  const isWatch = /reloj/i.test(product.category) || /reloj/i.test(product.name)
+  const isWatch = categoryForProduct(product.name) === 'Relojes'
   const markupUsd = isWatch
     ? commercialUsd >= 40 ? 20 : commercialUsd >= 30 ? 15 : 10
     : commercialUsd >= 100 ? 15 : 10
@@ -129,7 +135,8 @@ export async function syncCatalog() {
     for (const product of products) {
       const slug = `${slugify(product.name)}-${product.sku}`
       const existing = await prisma.product.findUnique({ where: { slug }, include: { images: { orderBy: { sortOrder: 'asc' } } } })
-      const category = await prisma.category.upsert({ where: { slug: slugify(product.category) }, update: { name: product.category }, create: { name: product.category, slug: slugify(product.category) } })
+      const categoryName = categoryForProduct(product.name)
+      const category = await prisma.category.upsert({ where: { slug: slugify(categoryName) }, update: { name: categoryName }, create: { name: categoryName, slug: slugify(categoryName) } })
       const brand = product.brand ? await prisma.brand.upsert({ where: { slug: slugify(product.brand) }, update: { name: product.brand }, create: { name: product.brand, slug: slugify(product.brand) } }) : undefined
       const { price, markupUsd } = sellingPrice(product, rate.value)
       const savedProduct = await prisma.product.upsert({

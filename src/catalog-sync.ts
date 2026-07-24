@@ -26,9 +26,16 @@ export const slugify = (value: string) => value
 
 const roundUsd = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
 
+export function categoryForProduct(name: string) {
+  if (/bandoler/i.test(name)) return 'Bandoleros'
+  if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'
+  if (/set|combo|duo/i.test(name)) return 'Sets y combos'
+  return 'Relojes'
+}
+
 export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'category' | 'name'>, rate: number) {
   const baseUsd = product.sourcePriceBs / rate
-  const isWatch = /reloj/i.test(product.category) || /reloj/i.test(product.name)
+  const isWatch = categoryForProduct(product.name) === 'Relojes'
   const markupUsd = isWatch
     ? baseUsd >= 40 ? 20 : baseUsd >= 30 ? 15 : 10
     : baseUsd >= 100 ? 15 : 10
@@ -82,11 +89,12 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       where: { slug },
       include: { images: { orderBy: { sortOrder: 'asc' } } },
     })
-    const categorySlug = slugify(product.category) || 'general'
+    const categoryName = categoryForProduct(product.name)
+    const categorySlug = slugify(categoryName)
     const category = await prisma.category.upsert({
       where: { slug: categorySlug },
-      update: { name: product.category },
-      create: { name: product.category, slug: categorySlug },
+      update: { name: categoryName },
+      create: { name: categoryName, slug: categorySlug },
     })
     const brandSlug = product.brand ? slugify(product.brand) : undefined
     const brand = brandSlug
