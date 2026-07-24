@@ -406,6 +406,8 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       syncRuns,
       topCartProducts,
       topViewedProducts,
+      chartEvents,
+      chartSales,
     ] = await Promise.all([
       prisma.analyticsEvent.count({ where: { type: 'page_view', createdAt: { gte: since } } }),
       prisma.analyticsEvent.count({ where: { type: 'product_view', createdAt: { gte: since } } }),
@@ -457,7 +459,38 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         orderBy: { _count: { productId: 'desc' } },
         take: 15,
       }),
+      prisma.analyticsEvent.findMany({
+        where: {
+          createdAt: { gte: since },
+          type: { in: ['page_view', 'product_view', 'add_to_cart'] },
+        },
+        select: { type: true, createdAt: true },
+      }),
+      prisma.sale.findMany({
+        where: { soldAt: { gte: since } },
+        select: { soldAt: true, quantity: true },
+      }),
     ])
+
+    const dayKey = (value: Date) => value.toISOString().slice(0, 10)
+    const dailyMap = new Map<string, { date: string; pageViews: number; productViews: number; addToCart: number; sales: number }>()
+    for (let offset = 29; offset >= 0; offset -= 1) {
+      const date = new Date(Date.now() - offset * 24 * 60 * 60 * 1000)
+      const key = dayKey(date)
+      dailyMap.set(key, { date: key, pageViews: 0, productViews: 0, addToCart: 0, sales: 0 })
+    }
+    for (const event of chartEvents) {
+      const bucket = dailyMap.get(dayKey(event.createdAt))
+      if (!bucket) continue
+      if (event.type === 'page_view') bucket.pageViews += 1
+      if (event.type === 'product_view') bucket.productViews += 1
+      if (event.type === 'add_to_cart') bucket.addToCart += 1
+    }
+    for (const sale of chartSales) {
+      const bucket = dailyMap.get(dayKey(sale.soldAt))
+      if (!bucket) continue
+      bucket.sales += sale.quantity || 1
+    }
 
     response.json({
       adminEmail,
@@ -471,6 +504,7 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         productsUnavailable,
         salesCount,
       },
+      dailySeries: [...dailyMap.values()],
       sales: sales.map((sale) => ({
         ...sale,
         priceUsd: sale.priceUsd == null ? null : Number(sale.priceUsd),
