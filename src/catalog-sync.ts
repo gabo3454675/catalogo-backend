@@ -21,7 +21,11 @@ type BcvRate = { value: number, updatedAt: Date }
 
 const rateUrl = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/oficial'
 
-const roundUsd = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+/** Redondea el precio de venta hacia arriba (a favor del negocio), sin centavos. */
+export const roundUsdOwnerFavor = (value: number) => {
+  const cents = Math.round((value + Number.EPSILON) * 100) / 100
+  return Math.max(1, Math.ceil(cents - 1e-9))
+}
 
 export function categoryForProduct(name: string) {
   if (/bandoler/i.test(name)) return 'Bandoleros'
@@ -36,7 +40,7 @@ export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'ca
   const markupUsd = isWatch
     ? baseUsd >= 40 ? 20 : baseUsd >= 30 ? 15 : 10
     : baseUsd >= 80 ? 20 : baseUsd >= 40 ? 15 : baseUsd >= 20 ? 10 : 7
-  return { price: roundUsd(baseUsd + markupUsd), markupUsd }
+  return { price: roundUsdOwnerFavor(baseUsd + markupUsd), markupUsd }
 }
 
 function findRate(value: unknown): number | undefined {
@@ -214,6 +218,37 @@ export async function reclassifyCatalogProducts() {
       })
       updated += 1
     }
+  }
+  return { total: products.length, updated }
+}
+
+export async function repriceCatalogProducts() {
+  const products = await prisma.product.findMany({
+    select: {
+      id: true,
+      name: true,
+      price: true,
+      sourcePriceBs: true,
+      exchangeRate: true,
+      markupUsd: true,
+    },
+  })
+  let updated = 0
+  for (const product of products) {
+    const rate = Number(product.exchangeRate ?? 0)
+    const sourcePriceBs = Number(product.sourcePriceBs ?? 0)
+    if (!(rate > 0) || !(sourcePriceBs > 0)) continue
+    const { price, markupUsd } = priceProduct({
+      name: product.name,
+      sourcePriceBs,
+      category: categoryForProduct(product.name),
+    }, rate)
+    if (Number(product.price) === price && Number(product.markupUsd) === markupUsd) continue
+    await prisma.product.update({
+      where: { id: product.id },
+      data: { price, markupUsd },
+    })
+    updated += 1
   }
   return { total: products.length, updated }
 }

@@ -11,6 +11,7 @@ import {
   failCatalogSync,
   persistCatalogBatch,
   reclassifyCatalogProducts,
+  repriceCatalogProducts,
 } from './catalog-sync.js'
 import { prisma } from './prisma.js'
 
@@ -125,6 +126,7 @@ function requireAdmin(request: express.Request, response: express.Response, next
 }
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+const ceilMoney = (value: number) => Math.max(1, Math.ceil(roundMoney(value) - 1e-9))
 
 function toPublicProduct<T extends {
   price: unknown
@@ -133,7 +135,7 @@ function toPublicProduct<T extends {
   markupUsd?: unknown | null
   [key: string]: unknown
 }>(product: T) {
-  const price = Number(product.price)
+  const price = ceilMoney(Number(product.price))
   const rate = Number(product.exchangeRate ?? 0)
   const {
     exchangeRate: _exchangeRate,
@@ -144,7 +146,7 @@ function toPublicProduct<T extends {
   return {
     ...rest,
     price,
-    priceBs: rate > 0 ? roundMoney(price * rate) : null,
+    priceBs: rate > 0 ? ceilMoney(price * rate) : null,
   }
 }
 
@@ -458,6 +460,14 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
 app.post('/api/v1/admin/reclassify', requireAdmin, async (_request, response, next) => {
   try {
     response.json(await reclassifyCatalogProducts())
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/v1/admin/reprice', requireAdmin, async (_request, response, next) => {
+  try {
+    response.json(await repriceCatalogProducts())
   } catch (error) {
     next(error)
   }
