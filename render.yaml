@@ -24,19 +24,5 @@ services:
         value: https://kronos-images.glonga10.workers.dev
       - key: MEDIA_UPLOAD_TOKEN
         sync: false
-  - type: cron
-    name: kronos-catalog-sync
-    runtime: node
-    region: oregon
-    schedule: "0 6 * * 0"
-    buildCommand: npm ci && npm run prisma:generate && npm run build
-    startCommand: npm run sync:catalog
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: kronos-db
-          property: connectionString
-      - key: MEDIA_WORKER_URL
-        value: https://kronos-images.glonga10.workers.dev
-      - key: MEDIA_UPLOAD_TOKEN
+      - key: CATALOG_SYNC_TOKEN
         sync: false

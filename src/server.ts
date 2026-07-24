@@ -1,7 +1,9 @@
 import 'dotenv/config'
 import cors from 'cors'
+import { timingSafeEqual } from 'node:crypto'
 import express from 'express'
 import { z } from 'zod'
+import { beginCatalogSync, completeCatalogSync, failCatalogSync, persistCatalogBatch } from './catalog-sync.js'
 import { prisma } from './prisma.js'
 
 const app = express()
@@ -18,6 +20,79 @@ app.use(cors({
     callback(new Error('Origen no permitido por CORS'))
   },
 }))
+
+const catalogProduct = z.object({
+  sku: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(500),
+  description: z.string().trim().max(10_000).optional(),
+  sourcePriceBs: z.number().finite().positive(),
+  category: z.string().trim().min(1).max(120),
+  brand: z.string().trim().min(1).max(120).optional(),
+  imageUrls: z.array(z.url()).max(10),
+  available: z.boolean(),
+  sourceUrl: z.url(),
+})
+
+const syncBatch = z.object({
+  runId: z.string().cuid().optional(),
+  products: z.array(catalogProduct).min(1).max(50),
+  complete: z.boolean().optional(),
+})
+
+const syncFailure = z.object({
+  runId: z.string().cuid(),
+  error: z.string().trim().min(1).max(2_000),
+})
+
+function isAuthorizedCatalogWorker(request: express.Request) {
+  const configuredToken = process.env.CATALOG_SYNC_TOKEN
+  const suppliedToken = request.get('X-Kronos-Sync-Token')
+  if (!configuredToken || !suppliedToken) return false
+  const expected = Buffer.from(configuredToken)
+  const received = Buffer.from(suppliedToken)
+  return expected.length === received.length && timingSafeEqual(expected, received)
+}
+
+app.post('/api/v1/internal/catalog-sync', async (request, response, next) => {
+  if (!isAuthorizedCatalogWorker(request)) {
+    response.status(401).json({ error: 'No autorizado' })
+    return
+  }
+  try {
+    const batch = syncBatch.parse(request.body)
+    const run = batch.runId
+      ? await prisma.syncRun.findUnique({ where: { id: batch.runId } })
+      : await beginCatalogSync()
+    if (!run) {
+      response.status(404).json({ error: 'Ejecución de sincronización no encontrada' })
+      return
+    }
+    const { productsAdded } = await persistCatalogBatch(run.id, batch.products)
+    const completed = batch.complete ? await completeCatalogSync(run.id) : undefined
+    response.status(batch.runId ? 200 : 201).json({
+      runId: run.id,
+      productsReceived: batch.products.length,
+      productsAdded,
+      status: completed?.status ?? 'running',
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/v1/internal/catalog-sync/fail', async (request, response, next) => {
+  if (!isAuthorizedCatalogWorker(request)) {
+    response.status(401).json({ error: 'No autorizado' })
+    return
+  }
+  try {
+    const failure = syncFailure.parse(request.body)
+    await failCatalogSync(failure.runId, failure.error)
+    response.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
 
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok', service: 'kronos-api' })
