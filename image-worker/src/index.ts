@@ -43,9 +43,11 @@ function priceInBolivars(value: string | undefined) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
-function absoluteImageUrl(value: string) {
+function absoluteImageUrl(value: string, path: string | undefined) {
   try {
-    return new URL(value, catalogUrl).toString()
+    const normalizedPath = (path ?? '/resource/volkovamen/fotos/').replace(/^(\.\.\/)+/, '/')
+    const base = new URL(normalizedPath, productsUrl)
+    return new URL(value, base).toString()
   } catch {
     return undefined
   }
@@ -53,16 +55,19 @@ function absoluteImageUrl(value: string) {
 
 function parseProducts(html: string): CatalogProduct[] {
   const products = new Map<string, CatalogProduct>()
-  for (const tagMatch of html.matchAll(/<[^>]*class=(["'])[^"']*\bcontenidoItem\b[^"']*\1[^>]*>/gi)) {
+  const tags = [...html.matchAll(/<[^>]*class=(["'])[^"']*\bcontenidoItem\b[^"']*\1[^>]*>/gi)]
+  for (const [position, tagMatch] of tags.entries()) {
     const attributes = readAttributes(tagMatch[0])
     const name = attributes.modalTituloProducto?.trim()
     const sourcePriceBs = priceInBolivars(attributes.modalPrecioCarrito)
     if (!name || !sourcePriceBs) continue
+    const segment = html.slice(tagMatch.index, tags[position + 1]?.index ?? html.length)
+    const info = segment.match(/class=(["'])[^"']*\btt-add-info\b[^"']*\1[\s\S]*?<li[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i)?.[2]?.trim()
 
     const imageUrls = [1, 2, 3, 4, 5]
       .map((index) => attributes[`modalImagenGaleria${index}`]?.trim())
       .filter((image): image is string => Boolean(image))
-      .map(absoluteImageUrl)
+      .map((image) => absoluteImageUrl(image, attributes.pathCli))
       .filter((image): image is string => Boolean(image))
     const sku = attributes.modalIdProducto?.trim() || slugify(name)
     products.set(sku, {
@@ -70,8 +75,8 @@ function parseProducts(html: string): CatalogProduct[] {
       name,
       description: attributes.modalDescripcionProducto?.trim() || undefined,
       sourcePriceBs,
-      category: attributes.modalCategoriaProducto?.trim() || 'General',
-      brand: attributes.modalMarcaProducto?.trim() || undefined,
+      category: attributes.modalCategoriaProducto?.trim() || info || 'General',
+      brand: attributes.modalMarcaProducto?.trim() || info || undefined,
       imageUrls: [...new Set(imageUrls)],
       available: attributes.modalStock !== '0',
       sourceUrl: catalogUrl,
