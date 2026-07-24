@@ -2,7 +2,7 @@ export interface Env {
   IMAGES: R2Bucket
   UPLOAD_TOKEN: string
   RENDER_API_URL: string
-  CATALOG_SYNC_TOKEN: string
+  CATALOG_SYNC_SECRET: string
 }
 
 const imageKey = (pathname: string) => pathname.slice(1).startsWith('products/') && !pathname.includes('..')
@@ -135,7 +135,7 @@ async function sendBatches(env: Env, products: CatalogProduct[], onRunId: (runId
     const batch = products.slice(index, index + batchSize)
     const response = await fetch(renderEndpoint(env), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Kronos-Sync-Token': env.CATALOG_SYNC_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'X-Kronos-Sync-Token': env.CATALOG_SYNC_SECRET },
       body: JSON.stringify({ runId, products: batch, complete: index + batchSize >= products.length }),
     })
     if (!response.ok) throw new Error(`Render rechazó el lote ${index / batchSize + 1}: ${response.status}.`)
@@ -158,7 +158,7 @@ async function synchronizeCatalog(env: Env) {
     if (runId) {
       await fetch(renderEndpoint(env, '/fail'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Kronos-Sync-Token': env.CATALOG_SYNC_TOKEN },
+        headers: { 'Content-Type': 'application/json', 'X-Kronos-Sync-Token': env.CATALOG_SYNC_SECRET },
         body: JSON.stringify({ runId, error: message }),
       })
     }
