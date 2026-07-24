@@ -1,0 +1,8 @@
+ALTER TABLE "Product"
+  ADD COLUMN "sourcePriceBs" DECIMAL(14,2),
+  ADD COLUMN "exchangeRate" DECIMAL(14,6),
+  ADD COLUMN "markupUsd" DECIMAL(12,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE "SyncRun"
+  ADD COLUMN "exchangeRate" DECIMAL(14,6),
+  ADD COLUMN "rateUpdatedAt" TIMESTAMP(3);
