@@ -341,6 +341,7 @@ function mergeVariantFamily(variants: SelectedProduct[]) {
     ...primary,
     imageUrl: images[0]?.url ?? primary.imageUrl,
     images,
+    available: sorted.some((variant) => variant.available),
     variantCount: sorted.length,
     variants: sorted.map((variant) => ({
       id: variant.id,
@@ -462,6 +463,9 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       addToCart,
       uniqueSessions,
       productsTotal,
+      productsUnavailable,
+      salesCount,
+      sales,
       syncRuns,
       topCartProducts,
       topViewedProducts,
@@ -475,6 +479,22 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         select: { sessionId: true },
       }),
       prisma.product.count(),
+      prisma.product.count({ where: { available: false } }),
+      prisma.sale.count({ where: { soldAt: { gte: since } } }),
+      prisma.sale.findMany({
+        orderBy: { soldAt: 'desc' },
+        take: 40,
+        select: {
+          id: true,
+          productId: true,
+          productName: true,
+          sku: true,
+          quantity: true,
+          priceUsd: true,
+          note: true,
+          soldAt: true,
+        },
+      }),
       prisma.syncRun.findMany({
         orderBy: { startedAt: 'desc' },
         take: 10,
@@ -511,7 +531,13 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         addToCart,
         uniqueSessions: uniqueSessions.length,
         productsTotal,
+        productsUnavailable,
+        salesCount,
       },
+      sales: sales.map((sale) => ({
+        ...sale,
+        priceUsd: sale.priceUsd == null ? null : Number(sale.priceUsd),
+      })),
       topCartProducts: topCartProducts.map((row) => ({
         productId: row.productId,
         productName: row.productName,
@@ -529,11 +555,96 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         status: run.status,
         productsFound: run.productsFound,
         productsAdded: run.productsAdded,
+        productsUnavailable: run.productsUnavailable,
         rateUpdatedAt: run.rateUpdatedAt,
         error: run.error,
         additions: run.additions,
       })),
     })
+  } catch (error) {
+    next(error)
+  }
+})
+
+const saleBody = z.object({
+  productId: z.string().trim().min(1).max(80),
+  quantity: z.coerce.number().int().min(1).max(50).default(1),
+  note: z.string().trim().max(500).optional(),
+})
+
+app.get('/api/v1/admin/products', requireAdmin, async (request, response, next) => {
+  try {
+    const search = typeof request.query.search === 'string' ? request.query.search.trim() : ''
+    if (search.length < 2) {
+      response.json([])
+      return
+    }
+    const products = await prisma.product.findMany({
+      where: {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { sku: { contains: search, mode: 'insensitive' } },
+        ],
+      },
+      take: 20,
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        price: true,
+        available: true,
+        imageUrl: true,
+        brand: { select: { name: true } },
+      },
+    })
+    response.json(products.map((product) => ({
+      ...product,
+      price: ceilMoney(Number(product.price)),
+    })))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/v1/admin/sales', requireAdmin, publicJson, async (request, response, next) => {
+  try {
+    const body = saleBody.parse(request.body)
+    const product = await prisma.product.findUnique({ where: { id: body.productId } })
+    if (!product) {
+      response.status(404).json({ error: 'Producto no encontrado' })
+      return
+    }
+    const sale = await prisma.sale.create({
+      data: {
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        quantity: body.quantity,
+        priceUsd: product.price,
+        note: body.note,
+      },
+    })
+    response.status(201).json({
+      id: sale.id,
+      productId: sale.productId,
+      productName: sale.productName,
+      sku: sale.sku,
+      quantity: sale.quantity,
+      priceUsd: Number(sale.priceUsd),
+      note: sale.note,
+      soldAt: sale.soldAt,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/v1/admin/sales/:id', requireAdmin, async (request, response, next) => {
+  try {
+    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id
+    await prisma.sale.delete({ where: { id } })
+    response.status(204).end()
   } catch (error) {
     next(error)
   }

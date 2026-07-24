@@ -172,6 +172,14 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         },
       })
     }
+
+    if (product.sku) {
+      await prisma.syncSighting.upsert({
+        where: { syncRunId_sku: { syncRunId: runId, sku: product.sku } },
+        update: {},
+        create: { syncRunId: runId, sku: product.sku },
+      })
+    }
   }
 
   await prisma.syncRun.update({
@@ -185,9 +193,31 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
 }
 
 export async function completeCatalogSync(runId: string) {
+  const sightings = await prisma.syncSighting.findMany({
+    where: { syncRunId: runId },
+    select: { sku: true },
+  })
+  const seenSkus = sightings.map((item) => item.sku)
+  let productsUnavailable = 0
+
+  if (seenSkus.length > 0) {
+    const result = await prisma.product.updateMany({
+      where: {
+        available: true,
+        sku: { notIn: seenSkus },
+      },
+      data: { available: false },
+    })
+    productsUnavailable = result.count
+  }
+
   return prisma.syncRun.update({
     where: { id: runId },
-    data: { status: 'success', completedAt: new Date() },
+    data: {
+      status: 'success',
+      completedAt: new Date(),
+      productsUnavailable,
+    },
   })
 }
 
