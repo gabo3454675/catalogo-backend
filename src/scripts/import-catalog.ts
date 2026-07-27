@@ -3,6 +3,7 @@ import axios from 'axios'
 import * as cheerio from 'cheerio'
 import { prisma } from '../prisma.js'
 import { uploadRemoteImage } from '../r2.js'
+import { type BcvRate, categoryForProduct, findRate, markupForBase, roundUsd, slugify } from '../catalog-utils.js'
 
 const SOURCE_URL = process.env.CATALOG_SOURCE_URL ?? 'https://www.milcatalogos.com/volkovamen/catalogo'
 const PRODUCT_API_URL = process.env.CATALOG_PRODUCTS_URL ?? 'https://xproservidor.com/catalogoassets/control/masProductos.php'
@@ -10,15 +11,6 @@ const RATE_URL = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/o
 const catalogProxyUrl = (process.env.CATALOG_PROXY_URL ?? process.env.MEDIA_WORKER_URL)?.replace(/\/$/, '')
 const uploadToken = process.env.MEDIA_UPLOAD_TOKEN
 const headers = { 'User-Agent': 'Mozilla/5.0', Referer: SOURCE_URL, Origin: 'https://www.milcatalogos.com', Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'es-VE,es;q=0.9' }
-
-const slugify = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-const roundUsd = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
-const categoryForProduct = (name: string) => {
-  if (/bandoler/i.test(name)) return 'Bandoleros'
-  if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'
-  if (/set|combo|duo/i.test(name)) return 'Sets y combos'
-  return 'Relojes'
-}
 
 type SourceProduct = {
   sku: string
@@ -30,8 +22,6 @@ type SourceProduct = {
   imageUrls: string[]
   available: boolean
 }
-
-type BcvRate = { value: number, updatedAt: Date }
 
 function parseProducts(html: string): SourceProduct[] {
   const $ = cheerio.load(html)
@@ -97,17 +87,6 @@ async function fetchSourceProducts() {
   return [...products.values()]
 }
 
-function findRate(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value !== 'object' || value === null) return undefined
-  const record = value as Record<string, unknown>
-  for (const key of ['promedio', 'venta', 'compra', 'rate', 'mid', 'tasa', 'value', 'usd']) {
-    const found = findRate(record[key])
-    if (found) return found
-  }
-  return undefined
-}
-
 async function fetchBcvRate(): Promise<BcvRate> {
   const { data } = await axios.get(RATE_URL, { headers: { Accept: 'application/json' } })
   const value = findRate(data)
@@ -119,9 +98,7 @@ async function fetchBcvRate(): Promise<BcvRate> {
 function sellingPrice(product: SourceProduct, rate: number) {
   const commercialUsd = product.sourcePriceBs / rate
   const isWatch = categoryForProduct(product.name) === 'Relojes'
-  const markupUsd = isWatch
-    ? Math.max(10, Math.min(17, Math.round(commercialUsd * 0.34)))
-    : Math.max(7, Math.min(15, Math.round(commercialUsd * 0.26)))
+  const markupUsd = markupForBase(commercialUsd, isWatch)
   return { price: roundUsd(commercialUsd + markupUsd), markupUsd }
 }
 

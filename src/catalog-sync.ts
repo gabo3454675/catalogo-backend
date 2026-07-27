@@ -1,9 +1,9 @@
 import { prisma } from './prisma.js'
 import { classifyProduct } from './product-classify.js'
 import { uploadRemoteImage } from './r2.js'
-import { slugify } from './slug.js'
+import { type BcvRate, categoryForProduct, findRate, markupForBase, roundUsdOwnerFavor, slugify } from './catalog-utils.js'
 
-export { slugify }
+export { categoryForProduct, markupForBase, roundUsdOwnerFavor, slugify }
 
 export type CatalogProduct = {
   sku: string
@@ -17,31 +17,7 @@ export type CatalogProduct = {
   sourceUrl: string
 }
 
-type BcvRate = { value: number, updatedAt: Date }
-
 const rateUrl = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/oficial'
-
-/** Redondea el precio de venta hacia arriba (a favor del negocio), sin centavos. */
-export const roundUsdOwnerFavor = (value: number) => {
-  const cents = Math.round((value + Number.EPSILON) * 100) / 100
-  return Math.max(1, Math.ceil(cents - 1e-9))
-}
-
-export function categoryForProduct(name: string) {
-  if (/bandoler/i.test(name)) return 'Bandoleros'
-  if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'
-  if (/set|combo|duo/i.test(name)) return 'Sets y combos'
-  return 'Relojes'
-}
-
-/**
- * Markup suave: porcentaje con piso/techo.
- * Protege margen en baratos y evita saltos agresivos en medios/altos.
- */
-export function markupForBase(baseUsd: number, isWatch: boolean) {
-  if (isWatch) return Math.max(10, Math.min(17, Math.round(baseUsd * 0.34)))
-  return Math.max(7, Math.min(15, Math.round(baseUsd * 0.26)))
-}
 
 export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'category' | 'name'>, rate: number) {
   const baseUsd = product.sourcePriceBs / rate
@@ -61,17 +37,6 @@ export function normalizeSourceImageUrl(value: string) {
   } catch {
     return value
   }
-}
-
-function findRate(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value !== 'object' || value === null) return undefined
-  const record = value as Record<string, unknown>
-  for (const key of ['promedio', 'venta', 'compra', 'rate', 'mid', 'tasa', 'value', 'usd']) {
-    const found = findRate(record[key])
-    if (found) return found
-  }
-  return undefined
 }
 
 async function fetchBcvRate(): Promise<BcvRate> {

@@ -30,3 +30,4 @@ services:
         value: glonga10@gmail.com
       - key: ADMIN_TOKEN
         sync: false
+      # Imágenes van por MEDIA_WORKER_URL (Worker/R2). CLOUDFLARE_ACCOUNT_ID no lo usa la API.

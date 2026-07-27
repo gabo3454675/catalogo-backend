@@ -17,19 +17,22 @@ import { prisma } from './prisma.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 3000)
-const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map((value) => value.trim()) ?? []
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map((value) => value.trim()).filter(Boolean) ?? []
 const adminEmail = process.env.ADMIN_EMAIL ?? 'glonga10@gmail.com'
 
 app.set('trust proxy', 1)
 app.disable('x-powered-by')
 app.use(helmet())
+// credentials: true preparado para T14 (migración a cookies httpOnly)
 app.use(cors({
+  credentials: true,
   origin(origin, callback) {
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    // Sin Origin (curl/health) o en allowlist → OK. CORS_ORIGIN vacío = denegar browsers.
+    if (!origin || (allowedOrigins.length > 0 && allowedOrigins.includes(origin))) {
       callback(null, true)
       return
     }
-    callback(new Error('Origen no permitido por CORS'))
+    callback(null, false)
   },
 }))
 
@@ -94,6 +97,43 @@ const analyticsEvent = z.object({
   metadata: z.string().trim().max(1_000).optional(),
 })
 
+function parseCookies(header: string | undefined): Record<string, string> {
+  if (!header) return {}
+  const cookies: Record<string, string> = {}
+  for (const pair of header.split(';')) {
+    const idx = pair.indexOf('=')
+    if (idx === -1) continue
+    const name = pair.slice(0, idx).trim()
+    const value = pair.slice(idx + 1).trim()
+    if (name) cookies[name] = value
+  }
+  return cookies
+}
+
+const COOKIE_NAME = 'kronos-admin-token'
+const COOKIE_MAX_AGE = 24 * 60 * 60 * 1000 // 24 h
+
+// onrender.com está en la Public Suffix List: FE y API son cross-site → SameSite=None + Secure.
+function setAdminCookie(response: express.Response, token: string) {
+  response.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    path: '/',
+    maxAge: COOKIE_MAX_AGE,
+  })
+}
+
+function clearAdminCookie(response: express.Response) {
+  response.cookie(COOKIE_NAME, '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    path: '/',
+    maxAge: 0,
+  })
+}
+
 function safeEqual(expected: string, received: string) {
   const left = Buffer.from(expected)
   const right = Buffer.from(received)
@@ -117,7 +157,8 @@ function requireCatalogWorker(request: express.Request, response: express.Respon
 
 function requireAdmin(request: express.Request, response: express.Response, next: express.NextFunction) {
   const configuredToken = process.env.ADMIN_TOKEN
-  const suppliedToken = request.get('X-Kronos-Admin-Token')
+  const cookies = parseCookies(request.headers.cookie)
+  const suppliedToken = cookies[COOKIE_NAME] || request.get('X-Kronos-Admin-Token') || ''
   if (!configuredToken || !suppliedToken || !safeEqual(configuredToken, suppliedToken)) {
     response.status(401).json({ error: 'No autorizado' })
     return
@@ -391,6 +432,30 @@ app.post('/api/v1/analytics', analyticsLimiter, publicJson, async (request, resp
   }
 })
 
+const loginBody = z.object({
+  token: z.string().trim().min(1),
+})
+
+app.post('/api/v1/admin/login', publicJson, (request, response) => {
+  const parsed = loginBody.safeParse(request.body)
+  if (!parsed.success) {
+    response.status(400).json({ error: 'Parámetros no válidos' })
+    return
+  }
+  const configuredToken = process.env.ADMIN_TOKEN
+  if (!configuredToken || !safeEqual(configuredToken, parsed.data.token)) {
+    response.status(401).json({ error: 'Token inválido' })
+    return
+  }
+  setAdminCookie(response, configuredToken)
+  response.json({ ok: true })
+})
+
+app.post('/api/v1/admin/logout', (_request, response) => {
+  clearAdminCookie(response)
+  response.status(204).end()
+})
+
 app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next) => {
   try {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -485,16 +550,21 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       }),
       prisma.sale.findMany({
         where: { soldAt: { gte: since } },
-        select: { soldAt: true, quantity: true },
+        select: {
+          soldAt: true,
+          quantity: true,
+          priceUsd: true,
+          product: { select: { category: { select: { name: true } } } },
+        },
       }),
     ])
 
     const dayKey = (value: Date) => value.toISOString().slice(0, 10)
-    const dailyMap = new Map<string, { date: string; pageViews: number; productViews: number; addToCart: number; sales: number }>()
+    const dailyMap = new Map<string, { date: string; pageViews: number; productViews: number; addToCart: number; sales: number; revenue: number }>()
     for (let offset = 29; offset >= 0; offset -= 1) {
       const date = new Date(Date.now() - offset * 24 * 60 * 60 * 1000)
       const key = dayKey(date)
-      dailyMap.set(key, { date: key, pageViews: 0, productViews: 0, addToCart: 0, sales: 0 })
+      dailyMap.set(key, { date: key, pageViews: 0, productViews: 0, addToCart: 0, sales: 0, revenue: 0 })
     }
     for (const event of chartEvents) {
       const bucket = dailyMap.get(dayKey(event.createdAt))
@@ -503,11 +573,27 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       if (event.type === 'product_view') bucket.productViews += 1
       if (event.type === 'add_to_cart') bucket.addToCart += 1
     }
+    let totalRevenue = 0
+    const categoryMap = new Map<string, { category: string; revenue: number; sales: number }>()
     for (const sale of chartSales) {
+      const units = sale.quantity || 1
+      const amount = Number(sale.priceUsd ?? 0) * units
+      totalRevenue += amount
       const bucket = dailyMap.get(dayKey(sale.soldAt))
-      if (!bucket) continue
-      bucket.sales += sale.quantity || 1
+      if (bucket) {
+        bucket.sales += units
+        bucket.revenue += amount
+      }
+      const category = sale.product?.category?.name ?? 'Sin categoría'
+      const categoryBucket = categoryMap.get(category) ?? { category, revenue: 0, sales: 0 }
+      categoryBucket.revenue += amount
+      categoryBucket.sales += units
+      categoryMap.set(category, categoryBucket)
     }
+    const revenueByCategory = [...categoryMap.values()]
+      .sort((left, right) => right.revenue - left.revenue)
+      .slice(0, 8)
+      .map((row) => ({ category: row.category, revenue: roundMoney(row.revenue), sales: row.sales }))
 
     response.json({
       adminEmail,
@@ -522,6 +608,10 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         salesCount,
       },
       dailySeries: [...dailyMap.values()],
+      revenue: roundMoney(totalRevenue),
+      averageTicket: salesCount > 0 ? roundMoney(totalRevenue / salesCount) : 0,
+      revenueByCategory,
+      revenueLast30Days: [...dailyMap.values()].map((day) => ({ date: day.date, revenue: roundMoney(day.revenue) })),
       unavailableProducts: unavailableProducts.map((product) => ({
         id: product.id,
         name: product.name,
@@ -574,33 +664,69 @@ const saleBody = z.object({
 app.get('/api/v1/admin/products', requireAdmin, async (request, response, next) => {
   try {
     const search = typeof request.query.search === 'string' ? request.query.search.trim() : ''
+
+    const rawPage = Number(request.query.page)
+    const rawPageSize = Number(request.query.pageSize)
+    const isPaginated = Number.isFinite(rawPage) || Number.isFinite(rawPageSize)
+
+    const page = Math.max(1, Number.isFinite(rawPage) ? Math.floor(rawPage) : 1)
+    const pageSize = Math.min(50, Math.max(1, Number.isFinite(rawPageSize) ? Math.floor(rawPageSize) : 24))
+
     if (search.length < 2) {
-      response.json([])
+      if (isPaginated) {
+        response.json({ data: [], meta: { total: 0, page, pageSize, totalPages: 0 } })
+      } else {
+        response.json([])
+      }
       return
     }
-    const products = await prisma.product.findMany({
-      where: {
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { sku: { contains: search, mode: 'insensitive' } },
-        ],
-      },
-      take: 20,
-      orderBy: { updatedAt: 'desc' },
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-        price: true,
-        available: true,
-        imageUrl: true,
-        brand: { select: { name: true } },
-      },
-    })
-    response.json(products.map((product) => ({
-      ...product,
-      price: ceilMoney(Number(product.price)),
-    })))
+
+    const where = {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' as const } },
+        { sku: { contains: search, mode: 'insensitive' as const } },
+      ],
+    }
+
+    const select = {
+      id: true,
+      sku: true,
+      name: true,
+      price: true,
+      available: true,
+      category: { select: { name: true } },
+    }
+
+    if (isPaginated) {
+      const [products, total] = await Promise.all([
+        prisma.product.findMany({
+          where,
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          orderBy: { updatedAt: 'desc' },
+          select,
+        }),
+        prisma.product.count({ where }),
+      ])
+      response.json({
+        data: products.map((product) => ({
+          ...product,
+          price: ceilMoney(Number(product.price)),
+        })),
+        meta: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+      })
+    } else {
+      const products = await prisma.product.findMany({
+        where,
+        take: 20,
+        orderBy: { updatedAt: 'desc' },
+        select,
+      })
+      response.json(products.map((product) => ({
+        ...product,
+        price: ceilMoney(Number(product.price)),
+      })))
+    }
   } catch (error) {
     next(error)
   }
