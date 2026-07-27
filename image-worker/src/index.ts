@@ -45,8 +45,12 @@ function priceInBolivars(value: string | undefined) {
 
 function absoluteImageUrl(value: string, path: string | undefined) {
   try {
+    const filename = value.split('/').pop()
+    if (filename && /\.(jpe?g|png|webp)$/i.test(filename)) {
+      return `https://xproservidor.com/resource/volkovamen/fotos/${filename}`
+    }
     const normalizedPath = (path ?? '/resource/volkovamen/fotos/').replace(/^(\.\.\/)+/, '/')
-    const base = new URL(normalizedPath, productsUrl)
+    const base = new URL(normalizedPath.endsWith('/') ? normalizedPath : `${normalizedPath}/`, 'https://xproservidor.com/')
     return new URL(value, base).toString()
   } catch {
     return undefined

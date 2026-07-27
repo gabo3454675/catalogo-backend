@@ -139,7 +139,11 @@ export async function downloadRemoteImage(sourceUrl: string) {
         dispatcher: safeDispatcher,
         redirect: 'manual',
         signal: controller.signal,
-        headers: { Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif' },
+        headers: {
+          Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8',
+          Referer: 'https://www.milcatalogos.com/volkovamen/catalogo',
+          'User-Agent': 'Mozilla/5.0 (compatible; KronosCatalog/1.0)',
+        },
       })
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel()

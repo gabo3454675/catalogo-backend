@@ -34,13 +34,33 @@ export function categoryForProduct(name: string) {
   return 'Relojes'
 }
 
+/**
+ * Markup suave: porcentaje con piso/techo.
+ * Protege margen en baratos y evita saltos agresivos en medios/altos.
+ */
+export function markupForBase(baseUsd: number, isWatch: boolean) {
+  if (isWatch) return Math.max(10, Math.min(17, Math.round(baseUsd * 0.34)))
+  return Math.max(7, Math.min(15, Math.round(baseUsd * 0.26)))
+}
+
 export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'category' | 'name'>, rate: number) {
   const baseUsd = product.sourcePriceBs / rate
   const isWatch = categoryForProduct(product.name) === 'Relojes'
-  const markupUsd = isWatch
-    ? baseUsd >= 40 ? 20 : baseUsd >= 30 ? 15 : 10
-    : baseUsd >= 80 ? 20 : baseUsd >= 40 ? 15 : baseUsd >= 20 ? 10 : 7
+  const markupUsd = markupForBase(baseUsd, isWatch)
   return { price: roundUsdOwnerFavor(baseUsd + markupUsd), markupUsd }
+}
+
+/** Normaliza URLs de foto VOLKOVA al path canónico de mayor calidad disponible. */
+export function normalizeSourceImageUrl(value: string) {
+  try {
+    const url = new URL(value)
+    const match = url.pathname.match(/\/(?:resource\/volkovamen\/fotos\/)([^/]+\.(?:jpe?g|png|webp))$/i)
+      || url.pathname.match(/\/fotos\/([^/]+\.(?:jpe?g|png|webp))$/i)
+    if (match) return `https://xproservidor.com/resource/volkovamen/fotos/${match[1]}`
+    return url.toString()
+  } catch {
+    return value
+  }
 }
 
 function findRate(value: unknown): number | undefined {
@@ -138,11 +158,12 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       },
     })
 
-    const imageUrls = [...new Set(product.imageUrls)].slice(0, 10)
+    const imageUrls = [...new Set(product.imageUrls.map(normalizeSourceImageUrl))].slice(0, 10)
     let coverImageUrl = existing?.images[0]?.url ?? saved.imageUrl
+    const refreshImages = process.env.REFRESH_PRODUCT_IMAGES === '1'
     for (const [sortOrder, sourceImageUrl] of imageUrls.entries()) {
       const storedImage = existing?.images.find((image) => image.sortOrder === sortOrder)
-      if (storedImage) {
+      if (storedImage && !refreshImages) {
         if (sortOrder === 0) coverImageUrl = storedImage.url
         continue
       }
@@ -156,6 +177,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         if (sortOrder === 0) coverImageUrl = imageUrl
       } catch (error) {
         console.warn(`No se pudo importar imagen ${sortOrder + 1} de ${product.sku}:`, error)
+        if (storedImage && sortOrder === 0) coverImageUrl = storedImage.url
       }
     }
     if (coverImageUrl && coverImageUrl !== saved.imageUrl) {
