@@ -15,11 +15,17 @@ export { slugify }
 
 export type BcvRate = { value: number, updatedAt: Date }
 
+export const ORIGINAL_WATCHES_CATEGORY = 'Relojería original'
+
 export function categoryForProduct(name: string) {
   if (/bandoler/i.test(name)) return 'Bandoleros'
   if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'
   if (/set|combo|duo/i.test(name)) return 'Sets y combos'
   return 'Relojes'
+}
+
+export function isWatchCategory(categoryName: string) {
+  return categoryName === 'Relojes' || categoryName === ORIGINAL_WATCHES_CATEGORY
 }
 
 /**

@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test src/**/*.test.ts src/**/**/*.test.ts",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "import:catalog": "tsx src/scripts/import-catalog.ts",
-    "sync:catalog": "node dist/scripts/import-catalog.js"
+    "import:original": "tsx src/scripts/import-original-watches.ts",
+    "sync:catalog": "node dist/scripts/import-catalog.js",
+    "sync:original": "node dist/scripts/import-original-watches.js"
   },
   "keywords": [],
   "author": "",

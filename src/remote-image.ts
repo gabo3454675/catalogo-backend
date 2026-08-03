@@ -4,7 +4,22 @@ import { isIP } from 'node:net'
 import type { LookupFunction } from 'node:net'
 import { Agent, fetch } from 'undici'
 
-const allowedImageHosts = new Set(['xproservidor.com', 'www.milcatalogos.com'])
+const defaultAllowedImageHosts = [
+  'xproservidor.com',
+  'www.milcatalogos.com',
+  'luajoyeriaccs.com',
+  'www.luajoyeriaccs.com',
+  'ecko-joyas.com',
+  'www.ecko-joyas.com',
+]
+
+const allowedImageHosts = new Set([
+  ...defaultAllowedImageHosts,
+  ...(process.env.REMOTE_IMAGE_ALLOWED_HOSTS ?? '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+])
 const allowedImageTypes = new Set(['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp'])
 const maxRedirects = 3
 
@@ -141,8 +156,8 @@ export async function downloadRemoteImage(sourceUrl: string) {
         signal: controller.signal,
         headers: {
           Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8',
-          Referer: 'https://www.milcatalogos.com/volkovamen/catalogo',
-          'User-Agent': 'Mozilla/5.0 (compatible; KronosCatalog/1.0)',
+          Referer: `${currentUrl.origin}/`,
+          'User-Agent': 'KRONOS-CatalogSync/1.0 (+https://kronos-frontend-wikw.onrender.com)',
         },
       })
       if (response.status >= 300 && response.status < 400) {

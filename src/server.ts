@@ -791,6 +791,18 @@ app.post('/api/v1/admin/reprice', requireAdmin, async (_request, response, next)
   }
 })
 
+app.post('/api/v1/admin/sync-original', requireAdmin, async (_request, response, next) => {
+  try {
+    const { syncOriginalWatches } = await import('./scripts/import-original-watches.js')
+    void syncOriginalWatches().catch((error) => {
+      console.error('Sync relojería original falló:', error)
+    })
+    response.status(202).json({ status: 'started', message: 'Sincronización de Relojería original iniciada (Lua + Ecko).' })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   console.error(error)
   const bodyError = error as { type?: string }

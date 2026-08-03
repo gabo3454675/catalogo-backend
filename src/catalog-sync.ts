@@ -1,15 +1,27 @@
 import { prisma } from './prisma.js'
 import { classifyProduct } from './product-classify.js'
 import { uploadRemoteImage } from './r2.js'
-import { type BcvRate, categoryForProduct, findRate, markupForBase, roundUsdOwnerFavor, slugify } from './catalog-utils.js'
+import {
+  type BcvRate,
+  categoryForProduct,
+  findRate,
+  isWatchCategory,
+  markupForBase,
+  ORIGINAL_WATCHES_CATEGORY,
+  roundUsdOwnerFavor,
+  slugify,
+} from './catalog-utils.js'
 
-export { categoryForProduct, markupForBase, roundUsdOwnerFavor, slugify }
+export { categoryForProduct, markupForBase, ORIGINAL_WATCHES_CATEGORY, roundUsdOwnerFavor, slugify }
 
 export type CatalogProduct = {
   sku: string
   name: string
   description?: string
-  sourcePriceBs: number
+  /** Costo en bolívares (fuentes VES como VOLKOVA). */
+  sourcePriceBs?: number
+  /** Costo/precio origen ya en USD (Lua, Ecko). */
+  sourcePriceUsd?: number
   category: string
   brand?: string
   imageUrls: string[]
@@ -19,11 +31,18 @@ export type CatalogProduct = {
 
 const rateUrl = process.env.BCV_RATE_URL ?? 'https://ve.dolarapi.com/v1/euros/oficial'
 
-export function priceProduct(product: Pick<CatalogProduct, 'sourcePriceBs' | 'category' | 'name'>, rate: number) {
-  const baseUsd = product.sourcePriceBs / rate
-  const isWatch = categoryForProduct(product.name) === 'Relojes'
+export function priceProduct(
+  product: Pick<CatalogProduct, 'sourcePriceBs' | 'sourcePriceUsd' | 'category' | 'name'>,
+  rate: number,
+) {
+  const baseUsd = typeof product.sourcePriceUsd === 'number' && product.sourcePriceUsd > 0
+    ? product.sourcePriceUsd
+    : Number(product.sourcePriceBs ?? 0) / rate
+  if (!(baseUsd > 0)) throw new Error(`Precio origen inválido para ${product.name}`)
+  const categoryName = product.category || categoryForProduct(product.name)
+  const isWatch = isWatchCategory(categoryName) || categoryForProduct(product.name) === 'Relojes'
   const markupUsd = markupForBase(baseUsd, isWatch)
-  return { price: roundUsdOwnerFavor(baseUsd + markupUsd), markupUsd }
+  return { price: roundUsdOwnerFavor(baseUsd + markupUsd), markupUsd, baseUsd }
 }
 
 /** Normaliza URLs de foto VOLKOVA al path canónico de mayor calidad disponible. */
@@ -75,7 +94,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       where: { slug },
       include: { images: { orderBy: { sortOrder: 'asc' } } },
     })
-    const categoryName = categoryForProduct(product.name)
+    const categoryName = product.category?.trim() || categoryForProduct(product.name)
     const categorySlug = slugify(categoryName)
     const category = await prisma.category.upsert({
       where: { slug: categorySlug },
@@ -89,7 +108,11 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       update: { name: brandName },
       create: { name: brandName, slug: brandSlug },
     })
-    const { price, markupUsd } = priceProduct(product, rate)
+    const { price, markupUsd, baseUsd } = priceProduct(product, rate)
+    // Fuentes USD: persistimos el origen como Bs equivalentes para que reprice() siga funcionando.
+    const sourcePriceBs = typeof product.sourcePriceUsd === 'number' && product.sourcePriceUsd > 0
+      ? Number((baseUsd * rate).toFixed(2))
+      : product.sourcePriceBs
     const saved = await prisma.product.upsert({
       where: { slug },
       update: {
@@ -97,7 +120,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         name: product.name,
         description: product.description,
         price,
-        sourcePriceBs: product.sourcePriceBs,
+        sourcePriceBs,
         exchangeRate: rate,
         markupUsd,
         available: product.available,
@@ -112,7 +135,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         name: product.name,
         description: product.description,
         price,
-        sourcePriceBs: product.sourcePriceBs,
+        sourcePriceBs,
         exchangeRate: rate,
         markupUsd,
         available: product.available,
@@ -179,19 +202,31 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
   return { productsAdded }
 }
 
-export async function completeCatalogSync(runId: string) {
+export type CompleteCatalogSyncOptions = {
+  /**
+   * Si se indica, solo marca no disponibles productos cuyo SKU empieza por alguno
+   * de estos prefijos (p. ej. LUA- / ECKO-). Evita tumbar el catálogo VOLKOVA.
+   */
+  skuPrefixes?: string[]
+}
+
+export async function completeCatalogSync(runId: string, options: CompleteCatalogSyncOptions = {}) {
   const sightings = await prisma.syncSighting.findMany({
     where: { syncRunId: runId },
     select: { sku: true },
   })
   const seenSkus = sightings.map((item) => item.sku)
   let productsUnavailable = 0
+  const prefixes = (options.skuPrefixes ?? []).filter(Boolean)
 
   if (seenSkus.length > 0) {
     const result = await prisma.product.updateMany({
       where: {
         available: true,
         sku: { notIn: seenSkus },
+        ...(prefixes.length > 0
+          ? { OR: prefixes.map((prefix) => ({ sku: { startsWith: prefix } })) }
+          : {}),
       },
       data: { available: false },
     })
@@ -248,6 +283,7 @@ export async function repriceCatalogProducts() {
       sourcePriceBs: true,
       exchangeRate: true,
       markupUsd: true,
+      category: { select: { name: true } },
     },
   })
   let updated = 0
@@ -258,7 +294,7 @@ export async function repriceCatalogProducts() {
     const { price, markupUsd } = priceProduct({
       name: product.name,
       sourcePriceBs,
-      category: categoryForProduct(product.name),
+      category: product.category?.name || categoryForProduct(product.name),
     }, rate)
     if (Number(product.price) === price && Number(product.markupUsd) === markupUsd) continue
     await prisma.product.update({

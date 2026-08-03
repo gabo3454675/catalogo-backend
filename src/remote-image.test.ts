@@ -5,6 +5,8 @@ import { isPrivateIp, validateRemoteImageUrl } from './remote-image.js'
 test('acepta únicamente los orígenes HTTPS explícitos', () => {
   assert.equal(validateRemoteImageUrl('https://xproservidor.com/images/a.jpg').hostname, 'xproservidor.com')
   assert.equal(validateRemoteImageUrl('https://www.milcatalogos.com/images/a.webp').hostname, 'www.milcatalogos.com')
+  assert.equal(validateRemoteImageUrl('https://luajoyeriaccs.com/wp-content/uploads/a.png').hostname, 'luajoyeriaccs.com')
+  assert.equal(validateRemoteImageUrl('https://www.ecko-joyas.com/storage/products/a.webp').hostname, 'www.ecko-joyas.com')
 
   for (const url of [
     'http://xproservidor.com/a.jpg',
