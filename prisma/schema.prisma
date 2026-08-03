@@ -131,3 +131,13 @@ model AnalyticsEvent {
   @@index([productId])
   @@index([sessionId])
 }
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  lastSeen  DateTime @default(now())
+
+  @@index([expiresAt])
+}

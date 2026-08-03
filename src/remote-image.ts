@@ -157,7 +157,7 @@ export async function downloadRemoteImage(sourceUrl: string) {
         headers: {
           Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8',
           Referer: `${currentUrl.origin}/`,
-          'User-Agent': 'KRONOS-CatalogSync/1.0 (+https://kronos-frontend-wikw.onrender.com)',
+          'User-Agent': 'KRONOS-CatalogSync/1.0',
         },
       })
       if (response.status >= 300 && response.status < 400) {
