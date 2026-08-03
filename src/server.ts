@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import cors from 'cors'
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
@@ -22,12 +22,27 @@ const adminEmail = process.env.ADMIN_EMAIL ?? 'glonga10@gmail.com'
 
 app.set('trust proxy', 1)
 app.disable('x-powered-by')
-app.use(helmet())
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "https://kronos-images.glonga10.workers.dev", "data:"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+}))
 // credentials: true preparado para T14 (migración a cookies httpOnly)
 app.use(cors({
   credentials: true,
+  allowedHeaders: ['Content-Type', 'X-Requested-With'],
   origin(origin, callback) {
-    // Sin Origin (curl/health) o en allowlist → OK. CORS_ORIGIN vacío = denegar browsers.
     if (!origin || (allowedOrigins.length > 0 && allowedOrigins.includes(origin))) {
       callback(null, true)
       return
@@ -59,6 +74,14 @@ const internalApiLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: 'Demasiadas solicitudes internas; inténtalo de nuevo más tarde' },
+})
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos de inicio de sesión; inténtalo de nuevo más tarde' },
 })
 
 const syncJson = express.json({ limit: '750kb', strict: true })
@@ -111,7 +134,7 @@ function parseCookies(header: string | undefined): Record<string, string> {
 }
 
 const COOKIE_NAME = 'kronos-admin-token'
-const COOKIE_MAX_AGE = 24 * 60 * 60 * 1000 // 24 h
+const SESSION_MAX_AGE = 24 * 60 * 60 * 1000 // 24 h
 
 // onrender.com está en la Public Suffix List: FE y API son cross-site → SameSite=None + Secure.
 function setAdminCookie(response: express.Response, token: string) {
@@ -120,7 +143,7 @@ function setAdminCookie(response: express.Response, token: string) {
     secure: true,
     sameSite: 'none',
     path: '/',
-    maxAge: COOKIE_MAX_AGE,
+    maxAge: SESSION_MAX_AGE,
   })
 }
 
@@ -140,6 +163,42 @@ function safeEqual(expected: string, received: string) {
   return left.length === right.length && timingSafeEqual(left, right)
 }
 
+function hashToken(token: string) {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+function generateSessionToken() {
+  return randomBytes(32).toString('hex')
+}
+
+async function createAdminSession() {
+  const token = generateSessionToken()
+  const tokenHash = hashToken(token)
+  const expiresAt = new Date(Date.now() + SESSION_MAX_AGE)
+  await prisma.adminSession.create({ data: { tokenHash, expiresAt } })
+  return { token, expiresAt }
+}
+
+async function findAdminSession(token: string) {
+  const tokenHash = hashToken(token)
+  const session = await prisma.adminSession.findUnique({ where: { tokenHash } })
+  if (!session) return null
+  if (session.expiresAt < new Date()) {
+    await prisma.adminSession.delete({ where: { id: session.id } })
+    return null
+  }
+  return session
+}
+
+async function deleteAdminSession(token: string) {
+  const tokenHash = hashToken(token)
+  await prisma.adminSession.deleteMany({ where: { tokenHash } })
+}
+
+async function cleanupExpiredAdminSessions() {
+  await prisma.adminSession.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+}
+
 function isAuthorizedCatalogWorker(request: express.Request) {
   const configuredToken = process.env.CATALOG_SYNC_TOKEN
   const suppliedToken = request.get('X-Kronos-Sync-Token')
@@ -155,15 +214,43 @@ function requireCatalogWorker(request: express.Request, response: express.Respon
   next()
 }
 
-function requireAdmin(request: express.Request, response: express.Response, next: express.NextFunction) {
+async function requireAdmin(request: express.Request, response: express.Response, next: express.NextFunction) {
   const configuredToken = process.env.ADMIN_TOKEN
   const cookies = parseCookies(request.headers.cookie)
-  const suppliedToken = cookies[COOKIE_NAME] || request.get('X-Kronos-Admin-Token') || ''
-  if (!configuredToken || !suppliedToken || !safeEqual(configuredToken, suppliedToken)) {
-    response.status(401).json({ error: 'No autorizado' })
+  const suppliedToken = cookies[COOKIE_NAME] || ''
+  const headerToken = request.get('X-Kronos-Admin-Token') || ''
+
+  // Server-to-server fallback
+  if (configuredToken && headerToken && safeEqual(configuredToken, headerToken)) {
+    next()
     return
   }
-  next()
+
+  // Cookie session auth
+  if (suppliedToken) {
+    const requestedWith = request.get('X-Requested-With')
+    if (requestedWith !== 'XMLHttpRequest') {
+      response.status(403).json({ error: 'Solicitud no autorizada' })
+      return
+    }
+
+    try {
+      const session = await findAdminSession(suppliedToken)
+      if (!session) {
+        response.status(401).json({ error: 'No autorizado' })
+        return
+      }
+      // Update lastSeen async (fire-and-forget)
+      prisma.adminSession.update({ where: { id: session.id }, data: { lastSeen: new Date() } }).catch(() => {})
+      next()
+      return
+    } catch {
+      response.status(401).json({ error: 'No autorizado' })
+      return
+    }
+  }
+
+  response.status(401).json({ error: 'No autorizado' })
 }
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
@@ -458,7 +545,7 @@ const loginBody = z.object({
   token: z.string().trim().min(1),
 })
 
-app.post('/api/v1/admin/login', publicJson, (request, response) => {
+app.post('/api/v1/admin/login', loginLimiter, publicJson, async (request, response) => {
   const parsed = loginBody.safeParse(request.body)
   if (!parsed.success) {
     response.status(400).json({ error: 'Parámetros no válidos' })
@@ -469,11 +556,21 @@ app.post('/api/v1/admin/login', publicJson, (request, response) => {
     response.status(401).json({ error: 'Token inválido' })
     return
   }
-  setAdminCookie(response, configuredToken)
-  response.json({ ok: true })
+  try {
+    const { token } = await createAdminSession()
+    setAdminCookie(response, token)
+    response.json({ ok: true })
+  } catch {
+    response.status(500).json({ error: 'No se pudo crear la sesión' })
+  }
 })
 
-app.post('/api/v1/admin/logout', (_request, response) => {
+app.post('/api/v1/admin/logout', requireAdmin, async (_request, response) => {
+  const cookies = parseCookies(_request.headers.cookie)
+  const suppliedToken = cookies[COOKIE_NAME] || ''
+  if (suppliedToken) {
+    await deleteAdminSession(suppliedToken).catch(() => {})
+  }
   clearAdminCookie(response)
   response.status(204).end()
 })
@@ -520,15 +617,14 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       prisma.product.count({ where: { available: true, category: { slug: 'relojes' } } }),
       prisma.product.count({ where: { category: { slug: 'relojeria-original' } } }),
       prisma.product.count({ where: { available: true, category: { slug: 'relojeria-original' } } }),
-      prisma.$queryRaw<Array<{ name: string, slug: string, total: bigint, available: bigint }>>`
-        SELECT c.name, c.slug,
-          COUNT(p.id)::bigint AS total,
-          COUNT(p.id) FILTER (WHERE p.available = true)::bigint AS available
-        FROM "Category" c
-        LEFT JOIN "Product" p ON p."categoryId" = c.id
-        GROUP BY c.id, c.name, c.slug
-        ORDER BY c.name ASC
-      `,
+      prisma.category.findMany({
+        orderBy: { name: 'asc' },
+        select: {
+          name: true,
+          slug: true,
+          products: { select: { available: true } },
+        },
+      }),
       prisma.product.findMany({
         where: { available: false },
         orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
@@ -667,12 +763,16 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       .slice(0, 8)
       .map((row) => ({ category: row.category, revenue: roundMoney(row.revenue), sales: row.sales }))
 
-    const catalogByCategory = categoryCounts.map((row) => ({
-      name: row.slug === 'relojes' ? 'Relojes estilo' : row.name,
-      slug: row.slug,
-      total: Number(row.total),
-      available: Number(row.available),
-    }))
+    const catalogByCategory = categoryCounts.map((row) => {
+      const total = row.products.length
+      const available = row.products.filter((product) => product.available).length
+      const label = row.slug === 'relojes'
+        ? 'Relojes estilo'
+        : row.slug === 'relojeria-original'
+          ? 'Relojería original'
+          : row.name
+      return { name: label, slug: row.slug, total, available }
+    })
 
     response.json({
       adminEmail,
@@ -748,6 +848,10 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
   } catch (error) {
     next(error)
   }
+})
+
+const saleIdParam = z.object({
+  id: z.string().cuid(),
 })
 
 const saleBody = z.object({
@@ -862,7 +966,7 @@ app.post('/api/v1/admin/sales', requireAdmin, publicJson, async (request, respon
 
 app.delete('/api/v1/admin/sales/:id', requireAdmin, async (request, response, next) => {
   try {
-    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id
+    const { id } = saleIdParam.parse(request.params)
     await prisma.sale.delete({ where: { id } })
     response.status(204).end()
   } catch (error) {
@@ -924,6 +1028,13 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   }
   response.status(500).json({ error: 'Error interno del servidor' })
 })
+
+cleanupExpiredAdminSessions().catch(() => {})
+
+// Cleanup expired sessions every hour
+setInterval(() => {
+  cleanupExpiredAdminSessions().catch(() => {})
+}, 60 * 60 * 1000)
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`API disponible en el puerto ${port}`)

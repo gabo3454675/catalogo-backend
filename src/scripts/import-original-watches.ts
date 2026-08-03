@@ -28,10 +28,16 @@ async function collectOriginalProducts() {
 }
 
 export async function syncOriginalWatches() {
+  // Fuerza re-subida de fotos: Ecko a veces quedó con imágenes de "relacionados".
+  process.env.REFRESH_PRODUCT_IMAGES = '1'
   const run = await beginCatalogSync('original')
   try {
     const products = await collectOriginalProducts()
     if (products.length === 0) throw new Error('No se obtuvieron productos de Lua ni Ecko.')
+
+    const inStock = products.filter((product) => product.available).length
+    const outOfStock = products.length - inStock
+    console.log(`Stock origen: ${inStock} disponibles · ${outOfStock} sin stock`)
 
     for (let index = 0; index < products.length; index += BATCH_SIZE) {
       const batch = products.slice(index, index + BATCH_SIZE)

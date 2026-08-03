@@ -120,7 +120,7 @@ export function productTypeForName(name: string, categoryName: string) {
     return categoryName
   }
 
-  if (categoryName === 'Relojería original') return 'Original'
+  // Relojería original: clasificar por estilo real, no un único tipo genérico.
   if (/digital|led|smart/i.test(name) || /\bskmei\b/i.test(name)) return 'Digital'
   if (/semi[- ]?auto|automatico|automático/i.test(name)) return 'Automático'
   if (/g[- ]?shock|g[- ]?chock|tactico|táctico|oakley|sumergible|deport/i.test(name)) return 'Deportivo'

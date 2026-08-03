@@ -3,7 +3,7 @@ import { ORIGINAL_WATCHES_CATEGORY } from '../catalog-utils.js'
 import type { CatalogProduct } from '../catalog-sync.js'
 
 const DEFAULT_BASE = 'https://luajoyeriaccs.com'
-const USER_AGENT = 'KRONOS-CatalogSync/1.0 (+https://kronos-frontend-wikw.onrender.com)'
+const USER_AGENT = 'KRONOS-CatalogSync/1.0'
 
 type WooStoreProduct = {
   id: number
@@ -14,6 +14,7 @@ type WooStoreProduct = {
   short_description?: string
   permalink?: string
   is_in_stock?: boolean
+  stock_availability?: { text?: string, class?: string }
   prices?: {
     price?: string
     regular_price?: string
@@ -79,7 +80,7 @@ export async function fetchLuaJoyeriaProducts(baseUrl = process.env.LUA_JOYERIA_
         category: ORIGINAL_WATCHES_CATEGORY,
         brand: brandFromCategories(item.categories),
         imageUrls: [...new Set((item.images ?? []).map((image) => image.src).filter((src): src is string => Boolean(src)))],
-        available: item.is_in_stock !== false,
+        available: item.is_in_stock === true && item.stock_availability?.class !== 'out-of-stock',
         sourceUrl: item.permalink || `${root}/p/${item.slug}/`,
       })
     }
