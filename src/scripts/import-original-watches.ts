@@ -3,13 +3,13 @@ import {
   beginCatalogSync,
   completeCatalogSync,
   failCatalogSync,
+  ORIGINAL_SKU_PREFIXES,
   persistCatalogBatch,
   type CatalogProduct,
 } from '../catalog-sync.js'
 import { fetchEckoJoyasProducts } from '../sources/ecko-joyas.js'
 import { fetchLuaJoyeriaProducts } from '../sources/lua-joyeria.js'
 
-const SKU_PREFIXES = ['LUA-', 'ECKO-']
 const BATCH_SIZE = 15
 
 async function collectOriginalProducts() {
@@ -28,7 +28,7 @@ async function collectOriginalProducts() {
 }
 
 export async function syncOriginalWatches() {
-  const run = await beginCatalogSync()
+  const run = await beginCatalogSync('original')
   try {
     const products = await collectOriginalProducts()
     if (products.length === 0) throw new Error('No se obtuvieron productos de Lua ni Ecko.')
@@ -39,7 +39,7 @@ export async function syncOriginalWatches() {
       console.log(`Lote ${Math.floor(index / BATCH_SIZE) + 1}: ${batch.length} procesados, ${result.productsAdded} nuevos`)
     }
 
-    const completed = await completeCatalogSync(run.id, { skuPrefixes: SKU_PREFIXES })
+    const completed = await completeCatalogSync(run.id, { skuPrefixes: [...ORIGINAL_SKU_PREFIXES] })
     console.log(`Sync original OK. found=${completed.productsFound} added=${completed.productsAdded} unavailable=${completed.productsUnavailable}`)
     return completed
   } catch (error) {

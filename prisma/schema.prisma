@@ -66,6 +66,7 @@ model SyncRun {
   startedAt      DateTime @default(now())
   completedAt    DateTime?
   status         String
+  source         String   @default("volkova")
   productsFound  Int      @default(0)
   productsAdded  Int      @default(0)
   productsUnavailable Int @default(0)
@@ -74,6 +75,8 @@ model SyncRun {
   error          String?
   additions      SyncAddition[]
   sightings      SyncSighting[]
+
+  @@index([source, startedAt])
 }
 
 model SyncAddition {

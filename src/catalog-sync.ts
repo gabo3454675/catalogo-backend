@@ -69,11 +69,15 @@ async function fetchBcvRate(): Promise<BcvRate> {
   return { value, updatedAt: timestamp ? new Date(String(timestamp)) : new Date() }
 }
 
-export async function beginCatalogSync() {
+/** Prefijos de relojería original: el sync VOLKOVA nunca debe tumbarlos. */
+export const ORIGINAL_SKU_PREFIXES = ['LUA-', 'ECKO-'] as const
+
+export async function beginCatalogSync(source: 'volkova' | 'original' = 'volkova') {
   const rate = await fetchBcvRate()
   return prisma.syncRun.create({
     data: {
       status: 'running',
+      source,
       exchangeRate: rate.value,
       rateUpdatedAt: rate.updatedAt,
     },
@@ -225,8 +229,14 @@ export async function completeCatalogSync(runId: string, options: CompleteCatalo
         available: true,
         sku: { notIn: seenSkus },
         ...(prefixes.length > 0
+          // Sync original: solo toca SKUs LUA-/ECKO-
           ? { OR: prefixes.map((prefix) => ({ sku: { startsWith: prefix } })) }
-          : {}),
+          // Sync VOLKOVA: nunca tumba relojería original
+          : {
+              AND: ORIGINAL_SKU_PREFIXES.map((prefix) => ({
+                NOT: { sku: { startsWith: prefix } },
+              })),
+            }),
       },
       data: { available: false },
     })

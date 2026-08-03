@@ -138,6 +138,10 @@ function renderEndpoint(env: Env, suffix = '') {
   return `${env.RENDER_API_URL.replace(/\/$/, '')}/api/v1/internal/catalog-sync${suffix}`
 }
 
+function renderInternal(env: Env, path: string) {
+  return `${env.RENDER_API_URL.replace(/\/$/, '')}/api/v1/internal/${path.replace(/^\//, '')}`
+}
+
 async function sendBatches(env: Env, products: CatalogProduct[], onRunId: (runId: string) => void) {
   let runId: string | undefined
   for (let index = 0; index < products.length; index += batchSize) {
@@ -160,10 +164,10 @@ async function synchronizeCatalog(env: Env) {
   try {
     const products = await fetchCatalogProducts()
     runId = await sendBatches(env, products, (receivedRunId) => { runId = receivedRunId })
-    console.log(`Sincronización completada: ${products.length} productos, ejecución ${runId}.`)
+    console.log(`Sincronización VOLKOVA completada: ${products.length} productos, ejecución ${runId}.`)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Error desconocido'
-    console.error('La sincronización falló:', message)
+    console.error('La sincronización VOLKOVA falló:', message)
     if (runId) {
       await fetch(renderEndpoint(env, '/fail'), {
         method: 'POST',
@@ -175,6 +179,21 @@ async function synchronizeCatalog(env: Env) {
   }
 }
 
+/** Dispara en Render el import Lua+Ecko (corre en background en la API). */
+async function triggerOriginalSync(env: Env) {
+  const response = await fetch(renderInternal(env, 'sync-original'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kronos-Sync-Token': env.CATALOG_SYNC_SECRET },
+  })
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`No se pudo iniciar sync original: ${response.status} ${body}`)
+  }
+  const data = await response.json().catch(() => ({}))
+  console.log('Sync original disparado:', data)
+  return data
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
@@ -182,6 +201,11 @@ export default {
       if (request.headers.get('X-Kronos-Token') !== env.UPLOAD_TOKEN) return new Response('Unauthorized', { status: 401 })
       await synchronizeCatalog(env)
       return Response.json({ status: 'started' })
+    }
+    if (url.pathname === '/sync/original' && request.method === 'POST') {
+      if (request.headers.get('X-Kronos-Token') !== env.UPLOAD_TOKEN) return new Response('Unauthorized', { status: 401 })
+      const data = await triggerOriginalSync(env)
+      return Response.json({ status: 'started', upstream: data })
     }
 
     const key = decodeURIComponent(url.pathname.slice(1))
@@ -206,7 +230,13 @@ export default {
 
     return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD, PUT' } })
   },
-  async scheduled(_controller, env, ctx) {
+  async scheduled(controller, env, ctx) {
+    // 10:00 UTC → VOLKOVA (imitación)
+    // 10:30 UTC → Lua + Ecko (original)
+    if (controller.cron === '30 10 * * *') {
+      ctx.waitUntil(triggerOriginalSync(env))
+      return
+    }
     ctx.waitUntil(synchronizeCatalog(env))
   },
 } satisfies ExportedHandler<Env>

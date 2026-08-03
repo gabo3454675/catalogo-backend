@@ -224,6 +224,28 @@ app.post('/api/v1/internal/catalog-sync/fail', internalApiLimiter, requireCatalo
   }
 })
 
+/** Dispara sync Lua+Ecko en background (cron Worker / jobs). */
+app.post('/api/v1/internal/sync-original', internalApiLimiter, requireCatalogWorker, async (_request, response, next) => {
+  try {
+    const running = await prisma.syncRun.findFirst({
+      where: { status: 'running', source: 'original' },
+      orderBy: { startedAt: 'desc' },
+      select: { id: true, startedAt: true },
+    })
+    if (running) {
+      response.status(202).json({ status: 'already_running', runId: running.id, startedAt: running.startedAt })
+      return
+    }
+    const { syncOriginalWatches } = await import('./scripts/import-original-watches.js')
+    void syncOriginalWatches().catch((error) => {
+      console.error('Sync relojería original (cron) falló:', error)
+    })
+    response.status(202).json({ status: 'started', message: 'Sincronización automática de Relojería original iniciada.' })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok', service: 'kronos-api' })
 })
@@ -466,10 +488,18 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       uniqueSessions,
       productsTotal,
       productsUnavailable,
+      productsAvailable,
+      styleTotal,
+      styleAvailable,
+      originalTotal,
+      originalAvailable,
+      categoryCounts,
       unavailableProducts,
       salesCount,
       sales,
       syncRuns,
+      lastVolkovaSync,
+      lastOriginalSync,
       topCartProducts,
       topViewedProducts,
       chartEvents,
@@ -485,6 +515,20 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       }),
       prisma.product.count(),
       prisma.product.count({ where: { available: false } }),
+      prisma.product.count({ where: { available: true } }),
+      prisma.product.count({ where: { category: { slug: 'relojes' } } }),
+      prisma.product.count({ where: { available: true, category: { slug: 'relojes' } } }),
+      prisma.product.count({ where: { category: { slug: 'relojeria-original' } } }),
+      prisma.product.count({ where: { available: true, category: { slug: 'relojeria-original' } } }),
+      prisma.$queryRaw<Array<{ name: string, slug: string, total: bigint, available: bigint }>>`
+        SELECT c.name, c.slug,
+          COUNT(p.id)::bigint AS total,
+          COUNT(p.id) FILTER (WHERE p.available = true)::bigint AS available
+        FROM "Category" c
+        LEFT JOIN "Product" p ON p."categoryId" = c.id
+        GROUP BY c.id, c.name, c.slug
+        ORDER BY c.name ASC
+      `,
       prisma.product.findMany({
         where: { available: false },
         orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
@@ -496,7 +540,7 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
           price: true,
           imageUrl: true,
           productType: true,
-          category: { select: { name: true } },
+          category: { select: { name: true, slug: true } },
           brand: { select: { name: true } },
           updatedAt: true,
         },
@@ -518,13 +562,41 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       }),
       prisma.syncRun.findMany({
         orderBy: { startedAt: 'desc' },
-        take: 10,
+        take: 16,
         include: {
           additions: {
             orderBy: { createdAt: 'desc' },
             take: 50,
             select: { id: true, productId: true, productName: true, sku: true, createdAt: true },
           },
+        },
+      }),
+      prisma.syncRun.findFirst({
+        where: { source: 'volkova', status: { in: ['success', 'failed'] } },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          startedAt: true,
+          completedAt: true,
+          productsFound: true,
+          productsAdded: true,
+          productsUnavailable: true,
+          error: true,
+        },
+      }),
+      prisma.syncRun.findFirst({
+        where: { source: 'original', status: { in: ['success', 'failed', 'running'] } },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          startedAt: true,
+          completedAt: true,
+          productsFound: true,
+          productsAdded: true,
+          productsUnavailable: true,
+          error: true,
         },
       }),
       prisma.analyticsEvent.groupBy({
@@ -595,6 +667,13 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       .slice(0, 8)
       .map((row) => ({ category: row.category, revenue: roundMoney(row.revenue), sales: row.sales }))
 
+    const catalogByCategory = categoryCounts.map((row) => ({
+      name: row.slug === 'relojes' ? 'Relojes estilo' : row.name,
+      slug: row.slug,
+      total: Number(row.total),
+      available: Number(row.available),
+    }))
+
     response.json({
       adminEmail,
       periodDays: 30,
@@ -604,8 +683,22 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         addToCart,
         uniqueSessions: uniqueSessions.length,
         productsTotal,
+        productsAvailable,
         productsUnavailable,
         salesCount,
+        styleWatches: styleTotal,
+        styleWatchesAvailable: styleAvailable,
+        originalWatches: originalTotal,
+        originalWatchesAvailable: originalAvailable,
+      },
+      catalogByCategory,
+      syncStatus: {
+        volkova: lastVolkovaSync,
+        original: lastOriginalSync,
+        schedule: {
+          volkova: 'Diario 10:00 UTC',
+          original: 'Diario 10:30 UTC',
+        },
       },
       dailySeries: [...dailyMap.values()],
       revenue: roundMoney(totalRevenue),
@@ -620,6 +713,7 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
         imageUrl: product.imageUrl,
         productType: product.productType,
         category: product.category?.name ?? null,
+        categorySlug: product.category?.slug ?? null,
         brand: product.brand?.name ?? null,
         updatedAt: product.updatedAt,
       })),
@@ -639,6 +733,7 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       })),
       syncRuns: syncRuns.map((run) => ({
         id: run.id,
+        source: run.source ?? 'volkova',
         startedAt: run.startedAt,
         completedAt: run.completedAt,
         status: run.status,
@@ -793,6 +888,15 @@ app.post('/api/v1/admin/reprice', requireAdmin, async (_request, response, next)
 
 app.post('/api/v1/admin/sync-original', requireAdmin, async (_request, response, next) => {
   try {
+    const running = await prisma.syncRun.findFirst({
+      where: { status: 'running', source: 'original' },
+      orderBy: { startedAt: 'desc' },
+      select: { id: true, startedAt: true },
+    })
+    if (running) {
+      response.status(202).json({ status: 'already_running', runId: running.id, startedAt: running.startedAt })
+      return
+    }
     const { syncOriginalWatches } = await import('./scripts/import-original-watches.js')
     void syncOriginalWatches().catch((error) => {
       console.error('Sync relojería original falló:', error)
