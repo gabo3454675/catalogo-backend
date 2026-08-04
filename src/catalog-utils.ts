@@ -40,17 +40,24 @@ export function isWatchCategory(categoryName: string) {
   return categoryName === 'Relojes' || categoryName === ORIGINAL_WATCHES_CATEGORY
 }
 
-/** Umbral USD: por debajo = original “más económico” (30%); por encima = “muy cara” (20%). */
-export const ORIGINAL_WATCH_PRICE_SPLIT_USD = 800
+/** Tramos de costo USD para markup de relojería original. */
+export const ORIGINAL_WATCH_MARKUP_MID_USD = 500
+export const ORIGINAL_WATCH_MARKUP_HIGH_USD = 1500
 
 /**
  * Markup de relojería original (Lua/Ecko):
- * - 30% en piezas más económicas (< $800 costo)
- * - 20% en piezas muy caras (>= $800 costo)
+ * - < $500 → 30%
+ * - $500–$1499.99 → 20%
+ * - >= $1500 → 15%
  */
+export function markupRateForOriginalWatch(baseUsd: number) {
+  if (baseUsd < ORIGINAL_WATCH_MARKUP_MID_USD) return 0.3
+  if (baseUsd < ORIGINAL_WATCH_MARKUP_HIGH_USD) return 0.2
+  return 0.15
+}
+
 export function markupForOriginalWatch(baseUsd: number) {
-  const rate = baseUsd < ORIGINAL_WATCH_PRICE_SPLIT_USD ? 0.3 : 0.2
-  return Math.max(1, Math.round(baseUsd * rate))
+  return Math.max(1, Math.round(baseUsd * markupRateForOriginalWatch(baseUsd)))
 }
 
 /**
