@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio'
-import { ORIGINAL_WATCHES_CATEGORY } from '../catalog-utils.js'
+import { ORIGINAL_WATCHES_CATEGORY, sanitizeSourceDescription } from '../catalog-utils.js'
 import type { CatalogProduct } from '../catalog-sync.js'
 
 const DEFAULT_BASE = 'https://luajoyeriaccs.com'
@@ -75,7 +75,7 @@ export async function fetchLuaJoyeriaProducts(baseUrl = process.env.LUA_JOYERIA_
       products.push({
         sku: `LUA-${skuSeed}`,
         name: item.name.trim(),
-        description: stripHtml(item.description) || stripHtml(item.short_description),
+        description: sanitizeSourceDescription(stripHtml(item.description) || stripHtml(item.short_description)),
         sourcePriceUsd,
         category: ORIGINAL_WATCHES_CATEGORY,
         brand: brandFromCategories(item.categories),

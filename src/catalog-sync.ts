@@ -9,6 +9,7 @@ import {
   markupForBase,
   ORIGINAL_WATCHES_CATEGORY,
   roundUsdOwnerFavor,
+  sanitizeSourceDescription,
   slugify,
 } from './catalog-utils.js'
 
@@ -113,6 +114,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       create: { name: brandName, slug: brandSlug },
     })
     const { price, markupUsd, baseUsd } = priceProduct(product, rate)
+    const description = sanitizeSourceDescription(product.description)
     // Fuentes USD: persistimos el origen como Bs equivalentes para que reprice() siga funcionando.
     const sourcePriceBs = typeof product.sourcePriceUsd === 'number' && product.sourcePriceUsd > 0
       ? Number((baseUsd * rate).toFixed(2))
@@ -122,7 +124,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       update: {
         sku: product.sku,
         name: product.name,
-        description: product.description,
+        description,
         price,
         sourcePriceBs,
         exchangeRate: rate,
@@ -137,7 +139,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
         sku: product.sku,
         slug,
         name: product.name,
-        description: product.description,
+        description,
         price,
         sourcePriceBs,
         exchangeRate: rate,

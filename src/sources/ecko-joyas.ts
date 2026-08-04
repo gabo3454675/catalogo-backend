@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio'
-import { ORIGINAL_WATCHES_CATEGORY } from '../catalog-utils.js'
+import { ORIGINAL_WATCHES_CATEGORY, sanitizeSourceDescription } from '../catalog-utils.js'
 import type { CatalogProduct } from '../catalog-sync.js'
 
 const DEFAULT_BASE = 'https://www.ecko-joyas.com'
@@ -132,12 +132,14 @@ async function enrichFromDetail(product: ListedProduct, root: string) {
     .pop()
     ?.trim()
 
-  const description = $('meta[name="description"]').attr('content')?.trim()
+  const description = sanitizeSourceDescription(
+    $('meta[name="description"]').attr('content')?.trim()
     || $('main p').filter((_i, el) => {
       const text = $(el).text().replace(/\s+/g, ' ').trim()
       return text.length > 40 && !/relojes\s*\//i.test(text) && !/^\$/.test(text)
     }).first().text().replace(/\s+/g, ' ').trim()
-    || undefined
+    || undefined,
+  )
 
   // Única imagen confiable: la del listado. La ficha solo trae relacionados.
   const imageUrls = product.imageUrl ? [upgradeImageUrl(product.imageUrl)] : []

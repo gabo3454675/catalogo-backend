@@ -17,6 +17,18 @@ export type BcvRate = { value: number, updatedAt: Date }
 
 export const ORIGINAL_WATCHES_CATEGORY = 'Relojería original'
 
+/** Quita contactos / marcas de proveedor en textos que verá el cliente. */
+export function sanitizeSourceDescription(text: string | undefined) {
+  if (!text) return undefined
+  const cleaned = text
+    .replace(/\b(wha?ts?app|whasap|wsp)\b[^.\n]{0,120}/gi, '')
+    .replace(/\b0?4\d{2}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\b(lua\s*joyer[ií]a|ecko\s*joyas)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return cleaned || undefined
+}
+
 export function categoryForProduct(name: string) {
   if (/bandoler/i.test(name)) return 'Bandoleros'
   if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'

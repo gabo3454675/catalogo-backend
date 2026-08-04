@@ -2,7 +2,6 @@
   "name": "kronos-images",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-24",
-  "account_id": "4f0382424fafaf872bc11ab912244f02",
   "keep_vars": true,
   "triggers": {
     "crons": [
