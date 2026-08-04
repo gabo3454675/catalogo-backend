@@ -428,7 +428,7 @@ const productQuery = z.object({
   brand: z.string().trim().optional(),
   type: z.string().trim().optional(),
   search: z.string().trim().optional(),
-  sort: z.enum(['recent', 'name', 'price-asc', 'price-desc']).default('recent'),
+  sort: z.enum(['recent', 'name', 'brand', 'price-asc', 'price-desc']).default('recent'),
 })
 
 const productSelect = {
@@ -459,12 +459,14 @@ app.get('/api/v1/products', async (request, response, next) => {
       ...(query.search ? { name: { contains: query.search, mode: 'insensitive' as const } } : {}),
     }
     const orderBy = query.sort === 'name'
-      ? { name: 'asc' as const }
-      : query.sort === 'price-asc'
-        ? { price: 'asc' as const }
-        : query.sort === 'price-desc'
-          ? { price: 'desc' as const }
-          : { createdAt: 'desc' as const }
+      ? [{ name: 'asc' as const }]
+      : query.sort === 'brand'
+        ? [{ brand: { name: 'asc' as const } }, { name: 'asc' as const }]
+        : query.sort === 'price-asc'
+          ? [{ price: 'asc' as const }]
+          : query.sort === 'price-desc'
+            ? [{ price: 'desc' as const }]
+            : [{ createdAt: 'desc' as const }]
     const [items, total] = await prisma.$transaction([
       prisma.product.findMany({
         where,
