@@ -7,13 +7,21 @@ import {
   findRate,
   isWatchCategory,
   markupForBase,
+  markupForOriginalWatch,
   ORIGINAL_WATCHES_CATEGORY,
   roundUsdOwnerFavor,
   sanitizeSourceDescription,
   slugify,
 } from './catalog-utils.js'
 
-export { categoryForProduct, markupForBase, ORIGINAL_WATCHES_CATEGORY, roundUsdOwnerFavor, slugify }
+export {
+  categoryForProduct,
+  markupForBase,
+  markupForOriginalWatch,
+  ORIGINAL_WATCHES_CATEGORY,
+  roundUsdOwnerFavor,
+  slugify,
+}
 
 export type CatalogProduct = {
   sku: string
@@ -41,8 +49,11 @@ export function priceProduct(
     : Number(product.sourcePriceBs ?? 0) / rate
   if (!(baseUsd > 0)) throw new Error(`Precio origen inválido para ${product.name}`)
   const categoryName = product.category || categoryForProduct(product.name)
+  const isOriginalWatch = categoryName === ORIGINAL_WATCHES_CATEGORY
   const isWatch = isWatchCategory(categoryName) || categoryForProduct(product.name) === 'Relojes'
-  const markupUsd = markupForBase(baseUsd, isWatch)
+  const markupUsd = isOriginalWatch
+    ? markupForOriginalWatch(baseUsd)
+    : markupForBase(baseUsd, isWatch)
   return { price: roundUsdOwnerFavor(baseUsd + markupUsd), markupUsd, baseUsd }
 }
 

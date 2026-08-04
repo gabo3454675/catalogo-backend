@@ -40,9 +40,22 @@ export function isWatchCategory(categoryName: string) {
   return categoryName === 'Relojes' || categoryName === ORIGINAL_WATCHES_CATEGORY
 }
 
+/** Umbral USD: por debajo = original “más económico” (30%); por encima = “muy cara” (20%). */
+export const ORIGINAL_WATCH_PRICE_SPLIT_USD = 800
+
 /**
- * Markup suave: porcentaje con piso/techo.
- * Protege margen en baratos y evita saltos agresivos en medios/altos.
+ * Markup de relojería original (Lua/Ecko):
+ * - 30% en piezas más económicas (< $800 costo)
+ * - 20% en piezas muy caras (>= $800 costo)
+ */
+export function markupForOriginalWatch(baseUsd: number) {
+  const rate = baseUsd < ORIGINAL_WATCH_PRICE_SPLIT_USD ? 0.3 : 0.2
+  return Math.max(1, Math.round(baseUsd * rate))
+}
+
+/**
+ * Markup VOLKOVA / imitación (y no-reloj): porcentaje con piso/techo.
+ * No aplica a Relojería original.
  */
 export function markupForBase(baseUsd: number, isWatch: boolean) {
   if (isWatch) return Math.max(10, Math.min(17, Math.round(baseUsd * 0.34)))
