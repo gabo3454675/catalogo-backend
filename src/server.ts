@@ -374,10 +374,15 @@ app.get('/api/v1/categories', async (_request, response, next) => {
 app.get('/api/v1/brands', async (request, response, next) => {
   try {
     const category = typeof request.query.category === 'string' ? request.query.category : undefined
+    const availableOnly = request.query.available === 'true' || request.query.available === '1'
+    const productFilter = {
+      ...(category ? { category: { slug: category } } : {}),
+      ...(availableOnly ? { available: true } : {}),
+    }
     const brands = await prisma.brand.findMany({
       where: {
         products: {
-          some: category ? { category: { slug: category } } : {},
+          some: productFilter,
         },
       },
       orderBy: { name: 'asc' },
@@ -385,7 +390,7 @@ app.get('/api/v1/brands', async (request, response, next) => {
         _count: {
           select: {
             products: {
-              where: category ? { category: { slug: category } } : undefined,
+              where: Object.keys(productFilter).length ? productFilter : undefined,
             },
           },
         },
@@ -401,12 +406,14 @@ app.get('/api/v1/product-types', async (request, response, next) => {
   try {
     const category = typeof request.query.category === 'string' ? request.query.category : 'relojes'
     const brand = typeof request.query.brand === 'string' ? request.query.brand : undefined
+    const availableOnly = request.query.available === 'true' || request.query.available === '1'
     const grouped = await prisma.product.groupBy({
       by: ['productType'],
       where: {
         productType: { not: null },
         category: { slug: category },
         ...(brand ? { brand: { slug: brand } } : {}),
+        ...(availableOnly ? { available: true } : {}),
       },
       _count: { _all: true },
       orderBy: { productType: 'asc' },
@@ -428,6 +435,7 @@ const productQuery = z.object({
   brand: z.string().trim().optional(),
   type: z.string().trim().optional(),
   search: z.string().trim().optional(),
+  available: z.enum(['true', 'false', '1', '0']).optional(),
   sort: z.enum(['recent', 'name', 'brand', 'price-asc', 'price-desc']).default('recent'),
 })
 
@@ -452,11 +460,27 @@ const productSelect = {
 app.get('/api/v1/products', async (request, response, next) => {
   try {
     const query = productQuery.parse(request.query)
+    const availableFilter = query.available === 'true' || query.available === '1'
+      ? true
+      : query.available === 'false' || query.available === '0'
+        ? false
+        : undefined
+    const search = query.search?.trim()
     const where = {
       ...(query.category ? { category: { slug: query.category } } : {}),
       ...(query.brand ? { brand: { slug: query.brand } } : {}),
       ...(query.type ? { productType: query.type } : {}),
-      ...(query.search ? { name: { contains: query.search, mode: 'insensitive' as const } } : {}),
+      ...(availableFilter === undefined ? {} : { available: availableFilter }),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' as const } },
+              { sku: { contains: search, mode: 'insensitive' as const } },
+              { productType: { contains: search, mode: 'insensitive' as const } },
+              { brand: { name: { contains: search, mode: 'insensitive' as const } } },
+            ],
+          }
+        : {}),
     }
     const orderBy = [
       { available: 'desc' as const },
