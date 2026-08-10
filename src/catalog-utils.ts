@@ -50,13 +50,39 @@ export function categoryForProduct(name: string) {
 }
 
 /** Categorías reales de tienda (no marcas/filtros del proveedor). */
-const STORE_CATEGORY_SLUGS = new Set([
+export const STORE_CATEGORY_SLUGS = new Set([
   'relojes',
   'relojeria-original',
   'bandoleros',
   'bolsos-y-morrales',
   'sets-y-combos',
 ])
+
+/** Slugs de accesorios / no-imitación (para expandir la colección Relojes). */
+export const NON_IMITATION_CATEGORY_SLUGS = [
+  'relojeria-original',
+  'bandoleros',
+  'bolsos-y-morrales',
+  'sets-y-combos',
+  'set-de-regalos',
+] as const
+
+/**
+ * Filtro Prisma de categoría para listados públicos.
+ * `relojes` (Imitación) incluye categorías-marca mal clasificadas del proveedor
+ * (Skmei, Curren, Rolex…) hasta que se reclasifiquen.
+ */
+export function categoryWhereForSlug(categorySlug: string | undefined) {
+  if (!categorySlug) return {}
+  if (categorySlug === 'relojes') {
+    return {
+      category: {
+        slug: { notIn: [...NON_IMITATION_CATEGORY_SLUGS] },
+      },
+    }
+  }
+  return { category: { slug: categorySlug } }
+}
 
 /**
  * Normaliza la categoría de catálogo.

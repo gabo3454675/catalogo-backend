@@ -13,7 +13,9 @@
     "import:catalog": "tsx src/scripts/import-catalog.ts",
     "import:original": "tsx src/scripts/import-original-watches.ts",
     "sync:catalog": "node dist/scripts/import-catalog.js",
-    "sync:original": "node dist/scripts/import-original-watches.js"
+    "sync:original": "node dist/scripts/import-original-watches.js",
+    "reclassify": "tsx src/scripts/reclassify-catalog.ts",
+    "reclassify:prod": "node dist/scripts/reclassify-catalog.js"
   },
   "keywords": [],
   "author": "",

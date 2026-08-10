@@ -13,6 +13,7 @@ import {
   reclassifyCatalogProducts,
   repriceCatalogProducts,
 } from './catalog-sync.js'
+import { categoryWhereForSlug, STORE_CATEGORY_SLUGS } from './catalog-utils.js'
 import { prisma } from './prisma.js'
 
 const app = express()
@@ -361,11 +362,33 @@ app.get('/api/v1/sync-status', async (_request, response, next) => {
 app.get('/api/v1/categories', async (_request, response, next) => {
   try {
     const categories = await prisma.category.findMany({
-      where: { products: { some: {} } },
+      where: {
+        slug: { in: [...STORE_CATEGORY_SLUGS, 'set-de-regalos'] },
+        products: { some: {} },
+      },
       orderBy: { name: 'asc' },
       include: { _count: { select: { products: true } } },
     })
-    response.json(categories)
+
+    // Contar imitación incluyendo categorías-marca residuales del proveedor.
+    const imitationCount = await prisma.product.count({
+      where: categoryWhereForSlug('relojes'),
+    })
+    const payload = categories.map((category) => (
+      category.slug === 'relojes'
+        ? { ...category, _count: { products: imitationCount } }
+        : category
+    ))
+    if (!payload.some((category) => category.slug === 'relojes') && imitationCount > 0) {
+      payload.push({
+        id: 'virtual-relojes',
+        name: 'Relojes',
+        slug: 'relojes',
+        _count: { products: imitationCount },
+      })
+    }
+
+    response.json(payload)
   } catch (error) {
     next(error)
   }
@@ -376,7 +399,7 @@ app.get('/api/v1/brands', async (request, response, next) => {
     const category = typeof request.query.category === 'string' ? request.query.category : undefined
     const availableOnly = request.query.available === 'true' || request.query.available === '1'
     const productFilter = {
-      ...(category ? { category: { slug: category } } : {}),
+      ...categoryWhereForSlug(category),
       ...(availableOnly ? { available: true } : {}),
     }
     const brands = await prisma.brand.findMany({
@@ -411,7 +434,7 @@ app.get('/api/v1/product-types', async (request, response, next) => {
       by: ['productType'],
       where: {
         productType: { not: null },
-        category: { slug: category },
+        ...categoryWhereForSlug(category),
         ...(brand ? { brand: { slug: brand } } : {}),
         ...(availableOnly ? { available: true } : {}),
       },
@@ -467,7 +490,7 @@ app.get('/api/v1/products', async (request, response, next) => {
         : undefined
     const search = query.search?.trim()
     const where = {
-      ...(query.category ? { category: { slug: query.category } } : {}),
+      ...categoryWhereForSlug(query.category),
       ...(query.brand ? { brand: { slug: query.brand } } : {}),
       ...(query.type ? { productType: query.type } : {}),
       ...(availableFilter === undefined ? {} : { available: availableFilter }),
