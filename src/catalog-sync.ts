@@ -8,6 +8,7 @@ import {
   isWatchCategory,
   markupForBase,
   markupForOriginalWatch,
+  normalizeSourceImageUrl,
   ORIGINAL_WATCHES_CATEGORY,
   roundUsdOwnerFavor,
   sanitizeSourceDescription,
@@ -57,19 +58,6 @@ export function priceProduct(
   return { price: roundUsdOwnerFavor(baseUsd + markupUsd), markupUsd, baseUsd }
 }
 
-/** Normaliza URLs de foto VOLKOVA al path canónico de mayor calidad disponible. */
-export function normalizeSourceImageUrl(value: string) {
-  try {
-    const url = new URL(value)
-    const match = url.pathname.match(/\/(?:resource\/volkovamen\/fotos\/)([^/]+\.(?:jpe?g|png|webp))$/i)
-      || url.pathname.match(/\/fotos\/([^/]+\.(?:jpe?g|png|webp))$/i)
-    if (match) return `https://xproservidor.com/resource/volkovamen/fotos/${match[1]}`
-    return url.toString()
-  } catch {
-    return value
-  }
-}
-
 async function fetchBcvRate(): Promise<BcvRate> {
   const response = await fetch(rateUrl, { headers: { Accept: 'application/json' } })
   if (!response.ok) throw new Error(`BCV respondió ${response.status}`)
@@ -83,6 +71,9 @@ async function fetchBcvRate(): Promise<BcvRate> {
 
 /** Prefijos de relojería original: el sync VOLKOVA nunca debe tumbarlos. */
 export const ORIGINAL_SKU_PREFIXES = ['LUA-', 'ECKO-'] as const
+
+/* Re-export for callers that imported from catalog-sync historically */
+export { normalizeSourceImageUrl } from './catalog-utils.js'
 
 export async function beginCatalogSync(source: 'volkova' | 'original' = 'volkova') {
   const rate = await fetchBcvRate()
@@ -166,6 +157,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
     const imageUrls = [...new Set(product.imageUrls.map(normalizeSourceImageUrl))].slice(0, 10)
     let coverImageUrl = existing?.images[0]?.url ?? saved.imageUrl
     const refreshImages = process.env.REFRESH_PRODUCT_IMAGES === '1'
+    let imagesChanged = false
     for (const [sortOrder, sourceImageUrl] of imageUrls.entries()) {
       const storedImage = existing?.images.find((image) => image.sortOrder === sortOrder)
       if (storedImage && !refreshImages) {
@@ -180,6 +172,7 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
           create: { productId: saved.id, sortOrder, url: imageUrl },
         })
         if (sortOrder === 0) coverImageUrl = imageUrl
+        imagesChanged = true
       } catch (error) {
         console.warn(`No se pudo importar imagen ${sortOrder + 1} de ${product.sku}:`, error)
         if (storedImage && sortOrder === 0) coverImageUrl = storedImage.url
@@ -187,6 +180,9 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
     }
     if (coverImageUrl && coverImageUrl !== saved.imageUrl) {
       await prisma.product.update({ where: { id: saved.id }, data: { imageUrl: coverImageUrl } })
+    } else if (imagesChanged) {
+      // Fuerza cache-bust en el frontend (productImageSrc usa updatedAt).
+      await prisma.product.update({ where: { id: saved.id }, data: { updatedAt: new Date() } })
     }
     if (!existing) {
       productsAdded += 1

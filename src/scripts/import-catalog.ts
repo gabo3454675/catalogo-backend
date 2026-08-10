@@ -3,7 +3,7 @@ import axios from 'axios'
 import * as cheerio from 'cheerio'
 import { prisma } from '../prisma.js'
 import { uploadRemoteImage } from '../r2.js'
-import { type BcvRate, categoryForProduct, findRate, markupForBase, roundUsd, slugify } from '../catalog-utils.js'
+import { type BcvRate, categoryForProduct, findRate, markupForBase, normalizeSourceImageUrl, roundUsd, slugify } from '../catalog-utils.js'
 
 const SOURCE_URL = process.env.CATALOG_SOURCE_URL ?? 'https://www.milcatalogos.com/volkovamen/catalogo'
 const PRODUCT_API_URL = process.env.CATALOG_PRODUCTS_URL ?? 'https://xproservidor.com/catalogoassets/control/masProductos.php'
@@ -23,6 +23,23 @@ type SourceProduct = {
   available: boolean
 }
 
+/** Resuelve fotos de galería al path canónico de alta calidad (evita thumbs del listado). */
+function absoluteVolkovaImage(value: string, pathCli?: string) {
+  try {
+    const filename = value.split('/').pop()
+    if (filename && /\.(jpe?g|png|webp)$/i.test(filename)) {
+      return normalizeSourceImageUrl(`https://xproservidor.com/resource/volkovamen/fotos/${filename}`)
+    }
+    if (pathCli) {
+      const base = new URL(pathCli.endsWith('/') ? pathCli : `${pathCli}/`, 'https://xproservidor.com/')
+      return normalizeSourceImageUrl(new URL(value, base).toString())
+    }
+    return normalizeSourceImageUrl(value)
+  } catch {
+    return undefined
+  }
+}
+
 function parseProducts(html: string): SourceProduct[] {
   const $ = cheerio.load(html)
   return $('.contenidoItem').map((_index, element) => {
@@ -30,14 +47,13 @@ function parseProducts(html: string): SourceProduct[] {
     const card = item.closest('.cajaItem')
     const sourcePriceBs = Number((item.attr('modalPrecioCarrito') ?? '').replace(/[.,](?=\d{3}(?:[.,]|$))/g, '').replace(',', '.'))
     const name = item.attr('modalTituloProducto')?.trim() ?? ''
-    const sourceImage = card.find('img[data-src]').first().attr('data-src')
-    const imageBase = sourceImage ? new URL('./', sourceImage).toString() : undefined
+    const pathCli = item.attr('pathCli')?.trim()
+    // Solo galería modal (full-res). No usar img[data-src] del listado: suele ser miniatura.
     const imageUrls = [1, 2, 3, 4, 5]
       .map((index) => item.attr(`modalImagenGaleria${index}`)?.trim())
       .filter((filename): filename is string => Boolean(filename))
-      .map((filename) => imageBase ? new URL(filename, imageBase).toString() : undefined)
+      .map((filename) => absoluteVolkovaImage(filename, pathCli))
       .filter((url): url is string => Boolean(url))
-    if (sourceImage && !imageUrls.includes(sourceImage)) imageUrls.unshift(sourceImage)
     if (!name || !Number.isFinite(sourcePriceBs)) return null
     return {
       sku: item.attr('modalIdProducto') ?? slugify(name),
@@ -120,10 +136,12 @@ export async function syncCatalog() {
         update: { sku: product.sku, name: product.name, description: product.description, price, sourcePriceBs: product.sourcePriceBs, exchangeRate: rate.value, markupUsd, available: product.available, sourceUrl: SOURCE_URL, categoryId: category.id, brandId: brand?.id },
         create: { sku: product.sku, slug, name: product.name, description: product.description, price, sourcePriceBs: product.sourcePriceBs, exchangeRate: rate.value, markupUsd, available: product.available, sourceUrl: SOURCE_URL, categoryId: category.id, brandId: brand?.id },
       })
+      const imageUrls = [...new Set(product.imageUrls.map(normalizeSourceImageUrl))].slice(0, 10)
       let coverImageUrl = existing?.images[0]?.url ?? savedProduct.imageUrl
-      for (const [sortOrder, sourceImageUrl] of product.imageUrls.entries()) {
+      const refreshImages = process.env.REFRESH_PRODUCT_IMAGES === '1'
+      for (const [sortOrder, sourceImageUrl] of imageUrls.entries()) {
         const storedImage = existing?.images.find((image) => image.sortOrder === sortOrder)
-        if (storedImage) {
+        if (storedImage && !refreshImages) {
           if (sortOrder === 0) coverImageUrl = storedImage.url
           continue
         }
@@ -137,6 +155,7 @@ export async function syncCatalog() {
           if (sortOrder === 0) coverImageUrl = imageUrl
         } catch (error) {
           console.warn(`No se pudo importar imagen ${sortOrder + 1} de ${product.sku}:`, error)
+          if (storedImage && sortOrder === 0) coverImageUrl = storedImage.url
         }
       }
       if (coverImageUrl && coverImageUrl !== savedProduct.imageUrl) {

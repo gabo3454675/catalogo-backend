@@ -554,8 +554,12 @@ app.post('/api/v1/admin/login', loginLimiter, publicJson, async (request, respon
     return
   }
   const configuredToken = process.env.ADMIN_TOKEN
-  if (!configuredToken || !safeEqual(configuredToken, parsed.data.token)) {
-    response.status(401).json({ error: 'Token inválido' })
+  const configuredPin = process.env.ADMIN_PIN
+  const supplied = parsed.data.token
+  const tokenOk = Boolean(configuredToken && safeEqual(configuredToken, supplied))
+  const pinOk = Boolean(configuredPin && safeEqual(configuredPin, supplied))
+  if (!tokenOk && !pinOk) {
+    response.status(401).json({ error: 'Clave inválida' })
     return
   }
   try {
@@ -1009,6 +1013,36 @@ app.post('/api/v1/admin/sync-original', requireAdmin, async (_request, response,
     })
     response.status(202).json({ status: 'started', message: 'Sincronización de Relojería original iniciada (Lua + Ecko).' })
   } catch (error) {
+    next(error)
+  }
+})
+
+/** Re-descarga fotos VOLKOVA en calidad canónica (corrige miniaturas borrosas). */
+app.post('/api/v1/admin/refresh-images', requireAdmin, async (_request, response, next) => {
+  try {
+    const workerUrl = (process.env.CATALOG_PROXY_URL ?? process.env.MEDIA_WORKER_URL)?.replace(/\/$/, '')
+    const uploadToken = process.env.MEDIA_UPLOAD_TOKEN
+    if (!workerUrl || !uploadToken) {
+      response.status(503).json({ error: 'MEDIA_WORKER_URL / MEDIA_UPLOAD_TOKEN no configurados' })
+      return
+    }
+    process.env.REFRESH_PRODUCT_IMAGES = '1'
+    const upstream = await fetch(`${workerUrl}/sync/trigger`, {
+      method: 'POST',
+      headers: { 'X-Kronos-Token': uploadToken },
+    })
+    if (!upstream.ok) {
+      process.env.REFRESH_PRODUCT_IMAGES = '0'
+      const body = await upstream.text().catch(() => '')
+      response.status(502).json({ error: `No se pudo disparar el sync: ${upstream.status} ${body}` })
+      return
+    }
+    response.status(202).json({
+      status: 'started',
+      message: 'Reimportación de imágenes VOLKOVA iniciada. Puede tardar varios minutos.',
+    })
+  } catch (error) {
+    process.env.REFRESH_PRODUCT_IMAGES = '0'
     next(error)
   }
 })

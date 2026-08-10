@@ -17,6 +17,19 @@ export type BcvRate = { value: number, updatedAt: Date }
 
 export const ORIGINAL_WATCHES_CATEGORY = 'Relojería original'
 
+/** Normaliza URLs de foto VOLKOVA al path canónico de mayor calidad disponible. */
+export function normalizeSourceImageUrl(value: string) {
+  try {
+    const url = new URL(value)
+    const match = url.pathname.match(/\/(?:resource\/volkovamen\/fotos\/)([^/]+\.(?:jpe?g|png|webp))$/i)
+      || url.pathname.match(/\/fotos\/([^/]+\.(?:jpe?g|png|webp))$/i)
+    if (match) return `https://xproservidor.com/resource/volkovamen/fotos/${match[1]}`
+    return url.toString()
+  } catch {
+    return value
+  }
+}
+
 /** Quita contactos / marcas de proveedor en textos que verá el cliente. */
 export function sanitizeSourceDescription(text: string | undefined) {
   if (!text) return undefined
