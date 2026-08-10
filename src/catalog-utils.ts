@@ -49,6 +49,55 @@ export function categoryForProduct(name: string) {
   return 'Relojes'
 }
 
+/** Categorías reales de tienda (no marcas/filtros del proveedor). */
+const STORE_CATEGORY_SLUGS = new Set([
+  'relojes',
+  'relojeria-original',
+  'bandoleros',
+  'bolsos-y-morrales',
+  'sets-y-combos',
+])
+
+/**
+ * Normaliza la categoría de catálogo.
+ * VOLKOVA manda a menudo la marca (Rolex, Skmei…) como "categoría";
+ * eso se usa como marca, no como categoría de tienda.
+ */
+export function resolveProductCategory(sourceCategory: string | undefined, name: string) {
+  const inferred = categoryForProduct(name)
+  const source = (sourceCategory ?? '').trim()
+  const sourceSlug = slugify(source)
+
+  if (sourceSlug === 'relojeria-original' || /^relojer[ií]a\s*original$/i.test(source)) {
+    return ORIGINAL_WATCHES_CATEGORY
+  }
+
+  // Accesorios detectados por nombre tienen prioridad.
+  if (inferred !== 'Relojes') return inferred
+
+  if (sourceSlug === 'bandoleros') return 'Bandoleros'
+  if (sourceSlug === 'bolsos-y-morrales' || sourceSlug === 'bolsos') return 'Bolsos y morrales'
+  if (sourceSlug === 'sets-y-combos' || sourceSlug === 'set-de-regalos') return 'Sets y combos'
+  if (sourceSlug === 'relojes') return 'Relojes'
+
+  // Marcas / Multimarcas / Tácticos / Fashion / General → Relojes (imitación)
+  return 'Relojes'
+}
+
+/** Si el texto del proveedor parece marca/filtro, úsalo como pista de marca. */
+export function brandHintFromSourceCategory(sourceCategory: string | undefined) {
+  const source = (sourceCategory ?? '').trim()
+  if (!source) return undefined
+  const sourceSlug = slugify(source)
+  if (STORE_CATEGORY_SLUGS.has(sourceSlug) || sourceSlug === 'set-de-regalos' || sourceSlug === 'bolsos') {
+    return undefined
+  }
+  if (/^(general|multimarcas|fashion|tacticos|t[aá]cticos)$/i.test(sourceSlug)) {
+    return undefined
+  }
+  return source
+}
+
 export function isWatchCategory(categoryName: string) {
   return categoryName === 'Relojes' || categoryName === ORIGINAL_WATCHES_CATEGORY
 }

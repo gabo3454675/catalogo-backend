@@ -458,15 +458,18 @@ app.get('/api/v1/products', async (request, response, next) => {
       ...(query.type ? { productType: query.type } : {}),
       ...(query.search ? { name: { contains: query.search, mode: 'insensitive' as const } } : {}),
     }
-    const orderBy = query.sort === 'name'
-      ? [{ name: 'asc' as const }]
-      : query.sort === 'brand'
-        ? [{ brand: { name: 'asc' as const } }, { name: 'asc' as const }]
-        : query.sort === 'price-asc'
-          ? [{ price: 'asc' as const }]
-          : query.sort === 'price-desc'
-            ? [{ price: 'desc' as const }]
-            : [{ createdAt: 'desc' as const }]
+    const orderBy = [
+      { available: 'desc' as const },
+      ...(query.sort === 'name'
+        ? [{ name: 'asc' as const }]
+        : query.sort === 'brand'
+          ? [{ brand: { name: 'asc' as const } }, { name: 'asc' as const }]
+          : query.sort === 'price-asc'
+            ? [{ price: 'asc' as const }]
+            : query.sort === 'price-desc'
+              ? [{ price: 'desc' as const }]
+              : [{ createdAt: 'desc' as const }]),
+    ]
     const [items, total] = await prisma.$transaction([
       prisma.product.findMany({
         where,
@@ -773,9 +776,9 @@ app.get('/api/v1/admin/overview', requireAdmin, async (_request, response, next)
       const total = row.products.length
       const available = row.products.filter((product) => product.available).length
       const label = row.slug === 'relojes'
-        ? 'Relojes estilo'
+        ? 'Imitación'
         : row.slug === 'relojeria-original'
-          ? 'Relojería original'
+          ? 'Original'
           : row.name
       return { name: label, slug: row.slug, total, available }
     })

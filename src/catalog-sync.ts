@@ -3,6 +3,7 @@ import { classifyProduct } from './product-classify.js'
 import { uploadRemoteImage } from './r2.js'
 import {
   type BcvRate,
+  brandHintFromSourceCategory,
   categoryForProduct,
   findRate,
   isWatchCategory,
@@ -10,6 +11,7 @@ import {
   markupForOriginalWatch,
   normalizeSourceImageUrl,
   ORIGINAL_WATCHES_CATEGORY,
+  resolveProductCategory,
   roundUsdOwnerFavor,
   sanitizeSourceDescription,
   slugify,
@@ -49,7 +51,7 @@ export function priceProduct(
     ? product.sourcePriceUsd
     : Number(product.sourcePriceBs ?? 0) / rate
   if (!(baseUsd > 0)) throw new Error(`Precio origen inválido para ${product.name}`)
-  const categoryName = product.category || categoryForProduct(product.name)
+  const categoryName = resolveProductCategory(product.category, product.name)
   const isOriginalWatch = categoryName === ORIGINAL_WATCHES_CATEGORY
   const isWatch = isWatchCategory(categoryName) || categoryForProduct(product.name) === 'Relojes'
   const markupUsd = isOriginalWatch
@@ -101,14 +103,19 @@ export async function persistCatalogBatch(runId: string, products: CatalogProduc
       where: { slug },
       include: { images: { orderBy: { sortOrder: 'asc' } } },
     })
-    const categoryName = product.category?.trim() || categoryForProduct(product.name)
+    const categoryName = resolveProductCategory(product.category, product.name)
     const categorySlug = slugify(categoryName)
     const category = await prisma.category.upsert({
       where: { slug: categorySlug },
       update: { name: categoryName },
       create: { name: categoryName, slug: categorySlug },
     })
-    const { brand: brandName, productType } = classifyProduct(product.name, product.brand, categoryName)
+    const brandFromCategory = brandHintFromSourceCategory(product.category)
+    const { brand: brandName, productType } = classifyProduct(
+      product.name,
+      product.brand || brandFromCategory,
+      categoryName,
+    )
     const brandSlug = slugify(brandName)
     const brand = await prisma.brand.upsert({
       where: { slug: brandSlug },
@@ -275,17 +282,30 @@ export async function reclassifyCatalogProducts() {
   })
   let updated = 0
   for (const product of products) {
-    const categoryName = product.category?.name ?? categoryForProduct(product.name)
-    const { brand: brandName, productType } = classifyProduct(product.name, product.brand?.name, categoryName)
+    const isOriginalSku = ORIGINAL_SKU_PREFIXES.some((prefix) => product.sku?.startsWith(prefix))
+    const categoryName = isOriginalSku || product.category?.slug === 'relojeria-original'
+      ? ORIGINAL_WATCHES_CATEGORY
+      : resolveProductCategory(product.category?.name, product.name)
+    const category = await prisma.category.upsert({
+      where: { slug: slugify(categoryName) },
+      update: { name: categoryName },
+      create: { name: categoryName, slug: slugify(categoryName) },
+    })
+    const brandHint = product.brand?.name || brandHintFromSourceCategory(product.category?.name)
+    const { brand: brandName, productType } = classifyProduct(product.name, brandHint, categoryName)
     const brand = await prisma.brand.upsert({
       where: { slug: slugify(brandName) },
       update: { name: brandName },
       create: { name: brandName, slug: slugify(brandName) },
     })
-    if (product.brandId !== brand.id || product.productType !== productType) {
+    if (
+      product.brandId !== brand.id
+      || product.productType !== productType
+      || product.categoryId !== category.id
+    ) {
       await prisma.product.update({
         where: { id: product.id },
-        data: { brandId: brand.id, productType },
+        data: { brandId: brand.id, productType, categoryId: category.id },
       })
       updated += 1
     }
