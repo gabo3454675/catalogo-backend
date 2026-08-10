@@ -44,7 +44,7 @@ export function sanitizeSourceDescription(text: string | undefined) {
 
 export function categoryForProduct(name: string) {
   if (/bandoler/i.test(name)) return 'Bandoleros'
-  if (/bols|morral|cartera/i.test(name)) return 'Bolsos y morrales'
+  if (/bols|morral|cartera|tripack|escolar/i.test(name)) return 'Bolsos y morrales'
   if (/set|combo|duo/i.test(name)) return 'Sets y combos'
   return 'Relojes'
 }
